@@ -2131,12 +2131,16 @@
         } catch (e) { return fail('EVIDENCE_FAILED', e && e.message || e); }
     };
 
-    // 3.4a labels are rule labels, not yet calibrated (docs/DFIT-PLAN.md §8.4, WP8 in 3.4b): every displayed label says so, and the
-    // leak-off type is never shown with a confidence (its benchmark agreement is low)
+    // Labels are rule labels (docs/DFIT-PLAN.md §8.4). WP8 (3.4b) calibrates the CLOSURE labels per (mode, label) cell: a cell counts as
+    // calibrated only where it met its §8.4 target out of fold (hitRate[mode][label].met). ISIP, p_i and step-down labels and the grade
+    // are not calibrated by the benchmark (cal.labels.<kind> stays false), so they keep saying so; the leak-off type is never shown with
+    // a confidence (its benchmark agreement is low)
     var PROV = 'provisional — not yet calibrated';
-    function _calibrated() { var c = G.PRiSM_dfit_cal; return !!(c && c.calibrated === true); }
-    function _pl(l) { return (l && l !== 'not-estimable' && !_calibrated()) ? l + ', provisional' : l; }
-    function _plLong(l) { return (l && l !== 'not-estimable' && !_calibrated()) ? l + ', ' + PROV : l; }
+    function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
+    function _clCal(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return !!(h && h.met === true); }
+    function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
+    function _pl(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', provisional' : l; }
+    function _plLong(l, ok) { return (l && l !== 'not-estimable' && !ok) ? l + ', ' + PROV : l; }
     function _typeTxt(c) { var cal = G.PRiSM_dfit_cal; return c.type + ((cal && cal.typeCalibrated === true) ? '' : ' (provisional — the leak-off type is not yet calibrated)'); }
     function _closureOf(run) {
         var c = run.consensus || run.consensusLite || {};
@@ -2150,7 +2154,7 @@
         if (cl.mode !== 'none') letter = 'C';
         if (cl.mode !== 'none' && light !== 'red' && aca) letter = 'B';
         if (cl.mode === 'single' && (cl.label === 'high' || cl.label === 'medium') && light !== 'red' && light !== 'amber' && (piL === 'high' || piL === 'medium')) letter = 'A';
-        why.push('Triage ' + (light || 'not run') + '; closure ' + (cl.mode === 'single' ? 'single with label ' + cl.label : cl.mode === 'range' ? 'a range (' + cl.label + ')' : 'not estimable') + '; p_i label ' + (piL || 'not available') + (_calibrated() ? '.' : ' (labels provisional, not yet calibrated).'));
+        why.push('Triage ' + (light || 'not run') + '; closure ' + (cl.mode === 'single' ? 'single with label ' + cl.label : cl.mode === 'range' ? 'a range (' + cl.label + ')' : 'not estimable') + '; p_i label ' + (piL || 'not available') + (_kCal('grade') ? '.' : ' (labels provisional, not yet calibrated).'));
         return { letter: letter, why: why.map(_txt) };
     }
     function _gradeOf(run) {
@@ -2181,16 +2185,16 @@
                 if (fin(val) && path) q(s, s.blocks.indexOf(blk), blk.rows.length - 1, 1, path, dp, label);
             }
             var piBr = aca && aca.pi && fin(aca.pi.hi) && fin(aca.pi.lo) ? ' [' + fmt(aca.pi.lo, 0) + '–' + fmt(aca.pi.hi, 0) + ']' : '';
-            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + ' psia' + piBr + (aca.pi.label ? ' (' + _pl(aca.pi.label) + ')' : '') : 'p_i not available';
-            var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + _pl(cl.label) + ') · ' + piTxt
-                : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + _pl(cl.label) + ') · ' + piTxt
+            var piTxt = aca && aca.pi ? 'p_i ' + fmt(aca.pi.value, 0) + ' psia' + piBr + (aca.pi.label ? ' (' + _pl(aca.pi.label, _kCal('pi')) + ')' : '') : 'p_i not available';
+            var keyLine = cl.mode === 'single' ? 'DFIT · closure ' + fmt(cl.value, 0) + ' psia (single, ' + _pl(cl.label, _clCal(cl.mode, cl.label)) + ') · ' + piTxt
+                : cl.mode === 'range' ? 'DFIT · closure range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (medians ' + fmt(cl.range.medians ? cl.range.medians.low : null, 0) + ' / ' + fmt(cl.range.medians ? cl.range.medians.high : null, 0) + '; ' + _pl(cl.label, _clCal(cl.mode, cl.label)) + ') · ' + piTxt
                 : 'DFIT · closure not estimable · ' + piTxt;
             var keyRows = [
-                ['Closure', cl.mode === 'single' ? fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label) + ')' : cl.mode === 'range' ? fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (range, ' + _plLong(cl.label) + ')' : 'not estimable'],
+                ['Closure', cl.mode === 'single' ? fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label, _clCal(cl.mode, cl.label)) + ')' : cl.mode === 'range' ? fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia (range, ' + _plLong(cl.label, _clCal(cl.mode, cl.label)) + ')' : 'not estimable'],
                 ['ISIP', isip ? fmt(isip.value, 0) + ' psia' : '–'],
                 ['Net pressure', ch && fin(ch.pn) ? fmt(ch.pn, 0) + ' psi' : (cl.mode === 'range' ? 'per family (range mode)' : '–')],
-                ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + _plLong(aca.pi.label) + ')' : '–'],
-                ['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)']
+                ['p_i', aca && aca.pi ? fmt(aca.pi.value, 0) + ' psia (' + _plLong(aca.pi.label, _kCal('pi')) + ')' : '–'],
+                ['Grade', _kCal('grade') ? grade.letter : grade.letter + ' (provisional)']
             ];
             // 10 headline
             if (want('dfit-headline')) {
@@ -2204,7 +2208,7 @@
                 if (aca && aca.pi) kvRow(s1, kv, 'p_i', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
                 if (aca && aca.kh) kvRow(s1, kv, 'kh/μ (late radial)', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']);
                 else if (aca && aca.bounds) { kvRow(s1, kv, 'k lower bound', aca.bounds.kLo, 6, 'md', 'aca.bounds.kLo', ['A1']); kvRow(s1, kv, 'k upper bound', aca.bounds.kHi, 6, 'md', 'aca.bounds.kHi', ['A1']); }
-                kv.rows.push(['Grade', _calibrated() ? grade.letter : grade.letter + ' (provisional)', []]);
+                kv.rows.push(['Grade', _kCal('grade') ? grade.letter : grade.letter + ' (provisional)', []]);
                 if (unc) {
                     var outs = [['Closure', 'closure', 'C1'], ['Net pressure', 'pn', 'F1'], ['Efficiency', 'eta', 'F1'], ['xf (PKN)', 'xf', 'F1'], ['CL', 'CL', 'F1'], ['p_i', 'pi', 'A1']];
                     if (unc.mode === 'range') {
@@ -2219,8 +2223,8 @@
                         s1.blocks.push(tb2);
                     }
                 }
-                var vl = cl.mode === 'single' ? (cl.label === 'high' && _calibrated() ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
-                var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label) + ').'
+                var vl = cl.mode === 'single' ? (cl.label === 'high' && _clCal('single', 'high') ? 'ok' : 'warn') : cl.mode === 'range' ? 'warn' : 'bad';
+                var vt = cl.mode === 'single' ? '✓ Closure ' + fmt(cl.value, 0) + ' psia (single, ' + _plLong(cl.label, _clCal(cl.mode, cl.label)) + ').'
                     : cl.mode === 'range' ? '⚠ Closure is a range ' + fmt(cl.range.lo, 0) + '–' + fmt(cl.range.hi, 0) + ' psia: every closure-dependent value is given per family.'
                     : '✗ No closure can be estimated from this falloff.';
                 if (vl !== 'ok' && cl.mode === 'single') vt = '⚠' + vt.slice(1);
@@ -2252,7 +2256,7 @@
                 var s4 = sec('dfit-aca', 'After-closure analysis', 13), kvA = { kind: 'kv', rows: [] }; s4.blocks.push(kvA);
                 kvA.rows.push(['Regime', aca.regimeSummary, _evOk(EVI, ['A1'])]);
                 kvA.rows.push(['Time origin', aca.origin + ' (t0 ' + fmt(aca.t0, 3) + ' h)', _evOk(EVI, ['A1'])]);
-                kvRow(s4, kvA, 'p_i (' + _pl(aca.pi.label) + ')', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
+                kvRow(s4, kvA, 'p_i (' + _pl(aca.pi.label, _kCal('pi')) + ')', aca.pi.value, 0, 'psia', 'aca.pi.value', ['A1']);
                 kvRow(s4, kvA, 'p_i bracket low', aca.pi.lo, 0, 'psia', 'aca.pi.lo', ['A1']); kvRow(s4, kvA, 'p_i bracket high', aca.pi.hi, 0, 'psia', 'aca.pi.hi', ['A1']);
                 if (aca.kh) { kvRow(s4, kvA, 'kh/μ', aca.kh.khmu, 2, 'md·ft/cp', 'aca.kh.khmu', ['A1']); kvRow(s4, kvA, 'k (kh/μ·μ/h)', aca.kh.k, 4, 'md', 'aca.kh.k', ['A1']); }
                 if (aca.nolte && aca.nolte.lin && fin(aca.nolte.lin.k)) kvRow(s4, kvA, 'k (F_L line, CL)', aca.nolte.lin.k, 6, 'md', 'aca.nolte.lin.k', ['A1']);
@@ -2432,10 +2436,11 @@
             L.push('# pump start h: ' + fmtSig(ev.tStart, 9) + '; breakdown h: ' + fmtSig(ev.tb, 9) + '; shut-in h: ' + fmtSig(ev.ts, 9) + '; Vi bbl: ' + fmtSig(ev.Vi, 6) + '; Vi* bbl: ' + fmtSig(ev.ViStar, 6) + '; tp h: ' + (ev.tp ? fmtSig(ev.tp.pump, 6) : '–'));
             L.push('# PICKS');
             (run.picks || []).forEach(function (p) { L.push('# ' + p.method + ' (' + p.family + (p.vote ? ', votes' : '') + '): ' + fmt(p.p, 1) + ' psia at G ' + fmt(p.G, 3) + (p.band ? '; P10–P90 ' + fmt(p.band.p10, 1) + '–' + fmt(p.band.p90, 1) : '')); });
-            if (run.isip && fin(run.isip.value)) L.push('# ISIP: ' + fmt(run.isip.value, 1) + ' psia (spread ' + fmt(run.isip.spread, 1) + ' psi, ' + _pl(run.isip.confidence) + ')');
+            if (run.isip && fin(run.isip.value)) L.push('# ISIP: ' + fmt(run.isip.value, 1) + ' psia (spread ' + fmt(run.isip.spread, 1) + ' psi, ' + _pl(run.isip.confidence, _kCal('isip')) + ')');
             L.push('# CLOSURE');
-            L.push('# ' + (cl.mode === 'single' ? 'single ' + fmt(cl.value, 1) + ' psia (' + _pl(cl.label) + ')' : cl.mode === 'range' ? 'range ' + fmt(cl.range.lo, 1) + '–' + fmt(cl.range.hi, 1) + ' psia (' + _pl(cl.label) + ')' : 'not estimable'));
-            if (!_calibrated()) L.push('# labels: rule labels, ' + PROV);
+            L.push('# ' + (cl.mode === 'single' ? 'single ' + fmt(cl.value, 1) + ' psia (' + _pl(cl.label, _clCal(cl.mode, cl.label)) + ')' : cl.mode === 'range' ? 'range ' + fmt(cl.range.lo, 1) + '–' + fmt(cl.range.hi, 1) + ' psia (' + _pl(cl.label, _clCal(cl.mode, cl.label)) + ')' : 'not estimable'));
+            if (_clCal(cl.mode, cl.label)) { var hr0 = _cal().hitRate[cl.mode][cl.label]; L.push('# labels: closure label calibrated on the synthetic benchmark (' + Math.round(100 * hr0.p) + ' % right on ' + hr0.n + ' ' + cl.mode + ' cases); ISIP and p_i labels and the grade are rule labels, ' + PROV); }
+            else L.push('# labels: rule labels, ' + PROV);
             if (run.classification && run.classification.ok !== false && run.classification.type) L.push('# leak-off type: ' + _typeTxt(run.classification));
             (arrOk(tpl.log) ? tpl.log : []).forEach(function (e) { L.push('# log ' + e.seq + ' ' + (e.at || '') + ' ' + (e.who || '') + ': ' + e.item + ' ' + _logVal(e.old) + ' → ' + _logVal(e.new) + (e.reason ? ' (' + String(e.reason).replace(/[\r\n]+/g, ' ') + ')' : '')); });
             L.push('# RESULTS');
@@ -2445,7 +2450,7 @@
                 L.push('# ' + k + ' ' + (u.byFamily ? 'F1 ' + fmtSig(u.byFamily.F1.p10, 5) + '/' + fmtSig(u.byFamily.F1.p50, 5) + '/' + fmtSig(u.byFamily.F1.p90, 5) + ' F2 ' + fmtSig(u.byFamily.F2.p10, 5) + '/' + fmtSig(u.byFamily.F2.p50, 5) + '/' + fmtSig(u.byFamily.F2.p90, 5)
                     : 'P10/P50/P90 ' + fmtSig(u.p10, 5) + '/' + fmtSig(u.p50, 5) + '/' + fmtSig(u.p90, 5)) + ' ' + u.unit);
             });
-            if (run.aca && run.aca.pi) L.push('# p_i psia ' + fmt(run.aca.pi.value, 1) + ' [' + fmt(run.aca.pi.lo, 1) + ', ' + fmt(run.aca.pi.hi, 1) + '] (' + _pl(run.aca.pi.label) + ')');
+            if (run.aca && run.aca.pi) L.push('# p_i psia ' + fmt(run.aca.pi.value, 1) + ' [' + fmt(run.aca.pi.lo, 1) + ', ' + fmt(run.aca.pi.hi, 1) + '] (' + _pl(run.aca.pi.label, _kCal('pi')) + ')');
             var gr = run.grade && run.grade.letter ? run.grade : _gradeOf(run);
             L.push('# GRADE ' + gr.letter + ': ' + (gr.why || []).join(' '));
             L.push('# DATA');

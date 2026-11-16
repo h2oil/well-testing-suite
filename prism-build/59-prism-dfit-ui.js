@@ -534,7 +534,9 @@
             closureGrad: _grad(_closureP(s), T), pn: _num(s.pn), eta: _num(s.eta), CL: _num(s.CL), Gamma: _num(s.Gamma), xf: _num(s.xf),
             pi: s.pi ? _num(s.pi.value) : null, piLabel: s.pi ? (s.pi.label || null) : null,
             khmu: _num(s.khmu), k: _num(s.k), kLo: _num(s.kLo), kHi: _num(s.kHi), triage: s.triage || null, grade: s.grade || null,
-            labelsCalibrated: _calOk(), labelNote: _calOk() ? null : 'closure, ISIP and p_i labels and the grade are ' + PROV,
+            labelsCalibrated: _clCal(c.mode, c.label) && _kCal('isip') && _kCal('pi') && _kCal('grade'),
+            labelNote: (_clCal(c.mode, c.label) && _kCal('isip') && _kCal('pi') && _kCal('grade')) ? null
+                : (_clCal(c.mode, c.label) ? 'the closure label is calibrated on the synthetic benchmark; ISIP and p_i labels and the grade are ' + PROV : 'closure, ISIP and p_i labels and the grade are ' + PROV),
             tests: _testRows(d), appVersion: _appVersion()
         };
         return W.dfit;
@@ -1448,7 +1450,7 @@
         if (_arr(D.piPoint)) s.push({ x: D.x, y: D.piPoint, color: C.p, dots: true, r: 2, label: 'p_i (point)' });
         var bands = (_arr(D.piLo) && _arr(D.piHi)) ? [{ x: D.x, lo: D.piLo, hi: D.piHi, color: C.band }] : [];
         if (!s.length) s.push({ x: D.x, y: D.piLo || [], color: C.d2, label: 'lower bracket' });
-        var h = (A.pi && _isNum(A.pi.value)) ? [{ y: A.pi.value, color: C.d1, label: 'p_i ' + _f(A.pi.value, 0) + ' (' + _lab(A.pi.label) + ')', fit: true }] : [];
+        var h = (A.pi && _isNum(A.pi.value)) ? [{ y: A.pi.value, color: C.d1, label: 'p_i ' + _f(A.pi.value, 0) + ' (' + _lab(A.pi.label, _kCal('pi')) + ')', fit: true }] : [];
         return { data: { series: s, bands: bands, hlines: h, xKind: 'log', xName: 't − t0', yName: 'p_i' }, opts: { title: 'p_i trajectory and bracket', xLabel: 't − t0 (h)', yLabel: 'p_i (psia)' } };
     };
     B.dfitCrDeriv = function (run) {
@@ -1934,14 +1936,23 @@
     // =========================================================================
     // SECTION 9 — HTML HELPERS (capture classes: .card/.fg-item inputs, .rbox/.rrow results, table.dtable, .chart-wrap)
     // =========================================================================
-    // 3.4a labels are rule labels, not yet calibrated (§8.4; WP8 calibrates them in 3.4b): every shown label says so, and the
-    // leak-off type is shown without a confidence (its agreement with the benchmark truth is low)
+    // Labels are rule labels (§8.4). WP8 (3.4b) calibrates the CLOSURE labels per (mode, label) cell: a cell counts as calibrated only
+    // where it met its §8.4 target out of fold (hitRate[mode][label].met), and then the board shows its hit rate. ISIP, p_i and
+    // step-down labels and the grade are not calibrated by the benchmark (cal.labels.<kind> stays false), so every one of them still
+    // says so; the leak-off type is shown without a confidence (its agreement with the benchmark truth is low)
     var PROV = 'provisional — not yet calibrated';
     var TYPE_NOTE = 'provisional — not yet calibrated: on the synthetic benchmark the type often differs from the true leak-off mechanism; read it with the evidence below';
-    function _calOk() { var c = G.PRiSM_dfit_cal; return !!(c && c.calibrated === true); }
-    function _lab(l) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || _calOk()) ? l : l + ', provisional'; }
-    function _gradeTxt(g) { return !g ? '—' : _calOk() ? g : g + ' (provisional)'; }
-    function _labLong(l) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || _calOk()) ? l : l + ' (' + PROV + ')'; }
+    function _cal() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? c : null; }
+    function _clHr(mode, l) { var c = _cal(), h = c && c.hitRate && c.hitRate[mode] && c.hitRate[mode][l]; return (h && h.met === true && _isNum(h.p)) ? h : null; }
+    function _clCal(mode, l) { return !!_clHr(mode, l); }
+    function _kCal(kind) { var c = _cal(); return !!(c && c.labels && c.labels[kind] === true); }
+    function _typeCal() { var c = _cal(); return !!(c && c.typeCalibrated === true); }
+    function _pc(x) { return Math.round(100 * x); }
+    // "medium (range) — 78 % right on 312 synthetic range cases (73–83 %)" (§8.4)
+    function _clRateTxt(mode, l) { var h = _clHr(mode, l); return h ? l + ' (' + mode + ') — ' + _pc(h.p) + ' % right on ' + h.n + ' synthetic ' + mode + ' cases (' + _pc(h.lo) + '–' + _pc(h.hi) + ' %)' : null; }
+    function _lab(l, ok) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || ok) ? l : l + ', provisional'; }
+    function _gradeTxt(g) { return !g ? '—' : _kCal('grade') ? g : g + ' (provisional)'; }
+    function _labLong(l, ok) { return !l ? '—' : (l === 'not-estimable' || l === 'stale' || ok) ? l : l + ' (' + PROV + ')'; }
     function _rrow(label, value) { return '<div class="rrow"><span class="rl">' + _esc(label) + '</span><span class="rv">' + _esc(value) + '</span></div>'; }
     function _rbox(title, rows, extra) { return '<div class="rbox"><div class="rbox-title">' + _esc(title) + '</div>' + rows.join('') + (extra || '') + '</div>'; }
     function _table(head, rows, id) {
@@ -2349,14 +2360,15 @@
         if (!run || !run.consensus && !run.consensusLite) { h.innerHTML = html + _note(_hasData(G.PRiSM_dataset) ? 'Press ▶ Analyse to build the closure board.' : 'Load a DFIT first.'); return; }
         var c = run.consensus || run.consensusLite, cl = _closureOf(run), z = _num(T.inputs.datumTvd), lab = c.confidence || 'stale';
         var val = cl.mode === 'single' ? _f(cl.value, 0) + ' psia' : (cl.mode === 'range' ? _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' / ') + ')' : 'not reached');
-        var rows = [_rrow('Closure', val), _rrow('Mode', cl.mode || 'none'), _rrow('Label', c.calibrated ? lab : _labLong(lab)),
+        var rows = [_rrow('Closure', val), _rrow('Mode', cl.mode || 'none'), _rrow('Label', c.calibrated && _clRateTxt(cl.mode, lab) ? _clRateTxt(cl.mode, lab) : _labLong(lab, false)),
                     _rrow('Gradient (psi/ft)', z && _isNum(_closureP(T.summary)) ? _f(_closureP(T.summary) / z, 3) : '—'), _rrow('Tolerance τ (psi)', _f(c.tau, 0))];
         var cp = T.picks.closure;
         if (cp && cp.source === 'user') rows.push(_rrow('User override', (cp.mode === 'family' ? cp.family + ' end' : _f(cp.p, 0) + ' psia') + (cp.reason ? ' — ' + cp.reason : '')));
         html += _rbox('Closure', rows);
         // a green tick only for a calibrated high label; until then every closure verdict is ⚠ (release review)
-        if (cl.mode === 'single') html += _verdict(lab === 'high' && c.calibrated && _calOk() ? 'ok' : 'warn', 'Closure ' + _f(cl.value, 0) + ' psia' + (z ? ' (' + _f(cl.value / z, 3) + ' psi/ft)' : '') + ', ' + (c.calibrated && _calOk() ? lab + ' confidence (calibrated rule label)' : 'label ' + lab + ' (' + PROV + ')') + ': ' + (c.preferredWhy || 'families agree') + ' (tolerance ' + _f(c.tau, 0) + ' psi).');
-        else if (cl.mode === 'range') html += _verdict('warn', 'Closure range ' + _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' and ') + '; ' + (c.calibrated ? lab : _lab(lab)) + '): every downstream number is shown for both readings.');
+        var cOk = !!(c.calibrated && _clCal(cl.mode, lab));
+        if (cl.mode === 'single') html += _verdict(lab === 'high' && cOk ? 'ok' : 'warn', 'Closure ' + _f(cl.value, 0) + ' psia' + (z ? ' (' + _f(cl.value / z, 3) + ' psi/ft)' : '') + ', ' + (cOk ? lab + ' confidence (calibrated rule label, ' + _pc(_clHr(cl.mode, lab).p) + ' % right on synthetic cases)' : 'label ' + lab + ' (' + PROV + ')') + ': ' + (c.preferredWhy || 'families agree') + ' (tolerance ' + _f(c.tau, 0) + ' psi).');
+        else if (cl.mode === 'range') html += _verdict('warn', 'Closure range ' + _f(cl.lo, 0) + '–' + _f(cl.hi, 0) + ' psia (medians ' + cl.medians.map(function (m) { return _f(m, 0); }).join(' and ') + '; ' + _lab(lab, cOk) + '): every downstream number is shown for both readings.');
         else html += _verdict('warn', 'No closure yet: dP/dG has not departed.' + (c.forecast && c.forecast.length ? ' Forecast: ' + c.forecast.map(function (f) { return _f(f.sigma, 0) + ' psia at ' + _f(f.dtc, 2) + ' h'; }).join(', ') + '.' : ''));
         html += _table(['Method', 'Family', 'Vote', 'Closure (psia)', 'G', 'Why', 'Ev.'], (run.picks || []).map(function (p) {
             return [p.method, p.family, p.vote ? 'yes' : (p.sameEvidenceAs ? 'same evidence' : 'no'), _f(p.p, 0), _f(p.G, 2), 'why', (p.ev || []).join ? p.ev.join(' ') : p.ev];
@@ -2413,7 +2425,7 @@
         var run = _run(), k = run && run.classification;
         if (!k || k.ok === false) { h.innerHTML = _note('Press ▶ Analyse to classify the leak-off type.'); return; }
         var sc = k.scores || {};
-        var html = _rbox('Leak-off type', [_rrow('Type', k.type + (_calOk() && G.PRiSM_dfit_cal.typeCalibrated === true ? '' : ' (provisional)')), _rrow('Confidence', (_calOk() && G.PRiSM_dfit_cal.typeCalibrated === true) ? 'calibrated' : TYPE_NOTE), _rrow('Alternatives', (k.alt || []).join(', ') || '—'),
+        var html = _rbox('Leak-off type', [_rrow('Type', k.type + (_typeCal() ? '' : ' (provisional)')), _rrow('Confidence', _typeCal() ? 'calibrated' : TYPE_NOTE), _rrow('Alternatives', (k.alt || []).join(', ') || '—'),
                     _rrow('R_vis (closure visibility)', _f(k.features && k.features.Rvis, 3)), _rrow('D / D_ref at closure', _f(k.features && k.features.DoverDref, 3))]);
         html += _table(['Type', 'Rule score (not a probability)'], Object.keys(sc).map(function (x) { return [x, _f(sc[x], 2)]; }), 'prism_dfit_class_tbl');
         (k.evidence || []).slice(0, 6).forEach(function (e) { html += _note(e); });
@@ -2530,8 +2542,8 @@
             html += _table(['Method', 'Family', 'ISIP (psia)', 'se (psi)', 'Status', 'Bleed-off at end (psi)'], (I.candidates || []).map(function (c) {
                 return [c.method, c.family, _f(c.value, 1), _f(c.se, 1), !c.ok ? 'failed' : (c.upper ? 'upper estimate' : 'accepted'), _f(c.bleedAtEnd, 1)];
             }), 'prism_dfit_isip_tbl');
-            html += _rbox('Consensus', [_rrow('ISIP (psia)', _f(I.value, 1) + ' ± ' + _f(I.spread, 1)), _rrow('Label', _labLong(I.confidence))]);
-            html += _verdict(I.confidence === 'high' && _calOk() ? 'ok' : 'warn', 'ISIP ' + _f(I.value, 0) + ' psia (' + _lab(I.confidence) + '): ' + ((I.why && I.why[0]) || ''));
+            html += _rbox('Consensus', [_rrow('ISIP (psia)', _f(I.value, 1) + ' ± ' + _f(I.spread, 1)), _rrow('Label', _labLong(I.confidence, _kCal('isip')))]);
+            html += _verdict(I.confidence === 'high' && _kCal('isip') ? 'ok' : 'warn', 'ISIP ' + _f(I.value, 0) + ' psia (' + _lab(I.confidence, _kCal('isip')) + '): ' + ((I.why && I.why[0]) || ''));
             (I.candidates || []).filter(function (c) { return c.upper; }).forEach(function (c) { html += _verdict('warn', 'The ' + c.method + ' ISIP ' + _f(c.value, 0) + ' psia is an upper estimate' + (_isNum(c.bleedAtEnd) ? ': the friction bleed-off had not died out at the end of the fit window (' + _f(c.bleedAtEnd, 0) + ' psi predicted).' : '.')); });
             var ip = T.picks.isip;
             if (ip && ip.source === 'user') html += _rrow('User ISIP', _f(ip.value, 1) + ' psia — ' + (ip.reason || ''));
@@ -2556,7 +2568,7 @@
     function _stepDownHTML(sd) {
         var r = sd.res;
         if (!r) return _note('Step-down found (' + sd.steps.length + ' steps); the wellbore engine is needed for the friction split.');
-        var rows = [_rrow('p_frac (psia)', _f(r.pFrac, 1)), _rrow('Perforation coefficient a', _sig(r.a, 3)), _rrow('Near-wellbore coefficient b', _sig(r.b, 3)), _rrow('β', _f(r.beta, 2)), _rrow('Label', _labLong(r.label))];
+        var rows = [_rrow('p_frac (psia)', _f(r.pFrac, 1)), _rrow('Perforation coefficient a', _sig(r.a, 3)), _rrow('Near-wellbore coefficient b', _sig(r.b, 3)), _rrow('β', _f(r.beta, 2)), _rrow('Label', _labLong(r.label, _kCal('stepDown')))];
         if (r.nOpenBand) rows.push(_rrow('Open perforations P10/P50/P90', _f(r.nOpenBand.p10, 1) + ' / ' + _f(r.nOpenBand.p50, 1) + ' / ' + _f(r.nOpenBand.p90, 1)));
         return _rbox('Step-down', rows) + (r.refused ? _verdict('warn', r.refused) : '');
     }
@@ -2596,13 +2608,13 @@
                    _fields(FIELDS.aca) + '<div class="prism-dfit-checks">' + _check('options.aca.carterExactFR', 'prism_dfit_aca_frc', 'Carter-exact F_R') + _check('options.ppd', 'prism_dfit_ppd4', 'Show PPD') + '</div></div>';
         if (!A || A.ok === false) return html + _note(_hasData(G.PRiSM_dataset) ? 'After-closure analysis needs data after closure — press ▶ Analyse.' : 'Load a DFIT first (step ①).');
         var b = A.brackets || {}, br = function (x) { return x ? _f(x[0], 0) + ' – ' + _f(x[1], 0) : '—'; };
-        html += _rbox('After-closure summary', [_rrow('Regime', A.regimeSummary), _rrow('p_i (psia)', _f(A.pi && A.pi.value, 0) + ' (' + _lab(A.pi && A.pi.label) + ')'),
+        html += _rbox('After-closure summary', [_rrow('Regime', A.regimeSummary), _rrow('p_i (psia)', _f(A.pi && A.pi.value, 0) + ' (' + _lab(A.pi && A.pi.label, _kCal('pi')) + ')'),
                     _rrow('kh/μ (md·ft/cp)', A.kh ? _sig(A.kh.khmu, 3) : '—'), _rrow('k (md)', A.kh ? _sig(A.kh.k, 3) : (A.nolte && A.nolte.lin ? _sig(A.nolte.lin.k, 3) + ' (F_L line)' : '—')),
                     _rrow('k bounds (md)', A.bounds ? _sig(A.bounds.kLo, 3) + ' – ' + _sig(A.bounds.kHi, 3) : '—')]);
         html += _table(['Bracket', 'Lower (psia)', 'Upper (psia)'], [['Cartesian', br(b.cart).split(' – ')[0], (br(b.cart).split(' – ')[1] || '—')], ['Impulse', br(b.imp).split(' – ')[0], (br(b.imp).split(' – ')[1] || '—')],
                     ['Derivative', br(b.deriv).split(' – ')[0], (br(b.deriv).split(' – ')[1] || '—')], ['Combined', br(b.combined).split(' – ')[0], (br(b.combined).split(' – ')[1] || '—')]], 'prism_dfit_brackets_tbl');
-        if (A.pi && A.pi.label === 'high') html += _verdict(_calOk() ? 'ok' : 'warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong('high') + ').');
-        else if (A.pi) html += _verdict('warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong(A.pi.label || 'low') + ').');
+        if (A.pi && A.pi.label === 'high') html += _verdict(_kCal('pi') ? 'ok' : 'warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong('high', _kCal('pi')) + ').');
+        else if (A.pi) html += _verdict('warn', 'p_i ' + _f(A.pi.value, 0) + ' psia, bracket ' + _f(A.pi.lo, 0) + '–' + _f(A.pi.hi, 0) + ' psia (' + _labLong(A.pi.label || 'low', _kCal('pi')) + ').');
         if (!A.kh && A.bounds) html += _verdict('warn', 'Radial flow not reached: k between ' + _sig(A.bounds.kLo, 3) + ' and ' + _sig(A.bounds.kHi, 3) + ' md.');
         (A.warnings || []).slice(0, 4).forEach(function (w) { if (w && w.text) html += _verdict(w.level === 'bad' ? 'bad' : 'warn', w.text); });
         var L = run.leak;
@@ -2992,8 +3004,8 @@
         if (!s) { rows.push(['DFIT', _hasData(G.PRiSM_dataset) ? 'press ▶ Analyse' : 'load a DFIT']); return rows; }
         var c = s.closure || {};
         rows.push(['ISIP', s.isip ? _f(s.isip.value, 0) + ' ± ' + _f(s.isip.spread, 0) + ' psia' : '—']);
-        var ctext = c.mode === 'single' ? _f(c.value, 0) + ' psia (' + _lab(c.label) + ')' :
-                    (c.mode === 'range' ? _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (' + _lab(c.label) + '; medians ' + [c.families && c.families.F1, c.families && c.families.F2].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + ')' : 'not reached');
+        var ctext = c.mode === 'single' ? _f(c.value, 0) + ' psia (' + _lab(c.label, _clCal(c.mode, c.label)) + ')' :
+                    (c.mode === 'range' ? _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (' + _lab(c.label, _clCal(c.mode, c.label)) + '; medians ' + [c.families && c.families.F1, c.families && c.families.F2].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + ')' : 'not reached');
         var cp = T.picks.closure;
         if (cp && cp.source === 'user') ctext += ' · user override';
         if (_st()._dfitWhatIf) ctext += ' · what-if';
@@ -3004,10 +3016,10 @@
         rows.push(['Efficiency η', _isNum(s.eta) ? _f(s.eta, 3) : '—']);
         rows.push(['Γ / CL', (_isNum(s.Gamma) ? _f(s.Gamma, 2) + ' psi/√min' : '—') + ' / ' + (_isNum(s.CL) ? _sig(s.CL, 3) + ' ft/√min (conditional)' : '—')]);
         rows.push([s.model === 'radial' ? 'R' : 'xf', _isNum(s.xf) ? _f(s.xf, 1) + ' ft (' + (s.model || '—') + ')' : (_isNum(s.R) ? _f(s.R, 1) + ' ft (radial)' : '—')]);
-        rows.push(['p_i', s.pi && _isNum(s.pi.value) ? _f(s.pi.value, 0) + ' psia [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + '] (' + _lab(s.pi.label) + ')' : '—']);
+        rows.push(['p_i', s.pi && _isNum(s.pi.value) ? _f(s.pi.value, 0) + ' psia [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + '] (' + _lab(s.pi.label, _kCal('pi')) + ')' : '—']);
         rows.push(['k', _isNum(s.khmu) ? 'kh/μ ' + _sig(s.khmu, 3) + ' md·ft/cp' : (_isNum(s.kLo) && _isNum(s.kHi) ? '[' + _sig(s.kLo, 3) + ', ' + _sig(s.kHi, 3) + '] md' : (_isNum(s.k) ? _sig(s.k, 3) + ' md' : '—'))]);
         rows.push(['Triage / grade', (s.triage || '—') + ' / ' + _gradeTxt(s.grade)]);
-        if (!_calOk()) rows.push(['Labels', PROV]);
+        if (!(_clCal(c.mode, c.label) && _kCal('isip') && _kCal('pi') && _kCal('grade'))) rows.push(['Labels', _clCal(c.mode, c.label) ? 'closure label calibrated; ISIP, p_i and grade ' + PROV : PROV]);
         var fr = run && run.frac && run.frac.chosen;
         if (fr && fr.stressCal && _isNum(fr.stressCal.dSigmaTect)) rows.push(['Stress-log offset', _f(fr.stressCal.dSigmaTect, 0) + ' psi']);
         if (run && run.fast) rows.push(['Bands', 'stale — ▶ Analyse refreshes them']);
@@ -3111,10 +3123,10 @@
         var s = results();
         if (!s || !s.closure) return '';
         var c = s.closure, out = 'DFIT';
-        if (c.mode === 'single') out += ' · closure ' + _f(c.value, 0) + ' psia (single, ' + _lab(c.label) + ')';
-        else if (c.mode === 'range') out += ' · closure range ' + _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (medians ' + [c.families && c.families.F2, c.families && c.families.F1].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + '; ' + _lab(c.label) + ')';
+        if (c.mode === 'single') out += ' · closure ' + _f(c.value, 0) + ' psia (single, ' + _lab(c.label, _clCal(c.mode, c.label)) + ')';
+        else if (c.mode === 'range') out += ' · closure range ' + _f(c.lo, 0) + '–' + _f(c.hi, 0) + ' psia (medians ' + [c.families && c.families.F2, c.families && c.families.F1].filter(function (x) { return x && _isNum(x.p50); }).map(function (x) { return _f(x.p50, 0); }).join(' / ') + '; ' + _lab(c.label, _clCal(c.mode, c.label)) + ')';
         else out += ' · no closure yet';
-        if (s.pi && _isNum(s.pi.value)) out += ' · p_i ' + _f(s.pi.value, 0) + ' psia' + (_isNum(s.pi.lo) && _isNum(s.pi.hi) ? ' [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + ']' : '') + (s.pi.label ? ' (' + _lab(s.pi.label) + ')' : '');
+        if (s.pi && _isNum(s.pi.value)) out += ' · p_i ' + _f(s.pi.value, 0) + ' psia' + (_isNum(s.pi.lo) && _isNum(s.pi.hi) ? ' [' + _f(s.pi.lo, 0) + '–' + _f(s.pi.hi, 0) + ']' : '') + (s.pi.label ? ' (' + _lab(s.pi.label, _kCal('pi')) + ')' : '');
         return _txt(out);
     }
     var REPORT_PLOTS = [{ key: 'dfitHistory', title: 'DFIT history' }, { key: 'dfitG', title: 'G-function plot' }, { key: 'dfitSqrt', title: 'Square-root of time' },

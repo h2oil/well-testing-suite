@@ -1052,7 +1052,8 @@
     // ═══════════════════════════════════════════════════════════════════════
     var LRANK = { high: 3, medium: 2, low: 1 };
     // the labels behind grades A and B are rule labels, not yet calibrated in 3.4a (WP8 calibrates them in 3.4b)
-    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
+    // WP8 (3.4b) calibrates only the closure labels; the grade (and the p_i label behind it) stays provisional until cal.labels.grade
+    function _provG() { var c = G.PRiSM_dfit_cal; return (c && c.calibrated === true && c.labels && c.labels.grade === true) ? '.' : ' (labels provisional, not yet calibrated).'; }
     function gradeCore(triage, consensus, aca, opts) {
         var why = [], light = triage && triage.light, verdict = triage && triage.verdict;
         var checks = triage && Array.isArray(triage.checks) ? triage.checks : [];

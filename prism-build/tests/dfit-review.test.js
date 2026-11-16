@@ -20,8 +20,9 @@
 //   RV17 designer range inputs reach the design; shut-in in days with the binding words
 //   RV18 DFIT mode: the PTA/RTA tools leave the Tools drawer and the PTA exports leave the Export menu; no C1 defaults banner
 //   RV19 data + picks export header: test, datum and app version; setPick refuses a primitive; Analyse on a non-DFIT record says why
-//   RV20 honest labels (WP7): every shown closure / ISIP / p_i label and the grade say "provisional — not yet calibrated"; the
-//        leak-off type never carries a confidence; a calibrated table drops the closure suffix but not the type's
+//   RV20 honest labels (WP7, WP8): every shown ISIP / p_i label and the grade say "provisional — not yet calibrated"; a closure
+//        label drops it only where its WP8 cell met the §8.4 target (then the board shows the hit rate); the leak-off type never
+//        carries a confidence
 //   RV21 the help's DFIT worked example (48-calc-help-production, PRiSM part 'dfit') matches the reference demo run end to end;
 //        the designer shot box holds the shut-in verdict; the surface-gauge demo shows one card per psig channel, named
 'use strict';
@@ -366,26 +367,38 @@ T.push({
   },
 });
 T.push({
-  name: 'RV20 honest labels: closure, ISIP and p_i labels and the grade are marked provisional (not yet calibrated) in the UI, report, exports and WTS_state; the leak-off type never shows a confidence', wp: WP, integration: true, opts: { timers: 'manual' },
+  name: 'RV20 honest labels: ISIP and p_i labels and the grade are marked provisional (not yet calibrated) in the UI, report, exports and WTS_state; a closure label drops it only where its WP8 cell met the §8.4 target, with its hit rate; the leak-off type never shows a confidence', wp: WP, integration: true, opts: { timers: 'manual' },
   async run(app, assert) {
     const w = dfitApp(app); if (!ready(w) || !w.PRiSM_dfit_ui) return;
     const U = w.PRiSM_dfit_ui;
     const run = await analyseDemo(app, 'reference');
-    assert(w.PRiSM_dfit_cal && w.PRiSM_dfit_cal.calibrated === false, '3.4a ships the uncalibrated placeholder');
+    const cal0 = w.PRiSM_dfit_cal;
+    assert(cal0 && cal0.calibrated === true && cal0.labels && cal0.labels.pi === false && cal0.labels.isip === false && cal0.labels.grade === false && cal0.typeCalibrated === false,
+      '3.4b ships the WP8 table: closure labels per cell, ISIP / p_i / grade / type not calibrated');
+    const cl = run.consensus, hr = cal0.hitRate[cl.mode] && cal0.hitRate[cl.mode][cl.confidence];
+    const met = !!(hr && hr.met === true);
+    assert(cl.calibrated === met, 'consensus.calibrated follows the cell: ' + cl.mode + ' ' + cl.confidence + ' met ' + met);
+    const pc = (x) => Math.round(100 * x);
     // rail and key line
     const rows = U.railRows(), row = (k) => (rows.find((r) => r[0] === k) || [])[1] || '';
-    assert(/\((high|medium|low), provisional/.test(row('Closure')), 'rail closure: ' + row('Closure'));
+    assert(met ? !/provisional/.test(row('Closure')) : /\((high|medium|low), provisional/.test(row('Closure')), 'rail closure: ' + row('Closure'));
     assert(/\((high|medium|low), provisional\)/.test(row('p_i')), 'rail p_i: ' + row('p_i'));
-    assert(row('Labels') === 'provisional — not yet calibrated', 'rail Labels row: ' + row('Labels'));
+    assert(row('Labels') === (met ? 'closure label calibrated; ISIP, p_i and grade provisional — not yet calibrated' : 'provisional — not yet calibrated'), 'rail Labels row: ' + row('Labels'));
     assert(/ \/ [A-D] \(provisional\)$/.test(row('Triage / grade')), 'rail grade is provisional: ' + row('Triage / grade'));
-    assert(/, provisional\)/.test(U.keyLine()) && /, provisional\)/.test(w.PRiSM_reportKeyLine()), 'key line: ' + U.keyLine());
+    assert(/, provisional\)/.test(U.keyLine()) && /, provisional\)/.test(w.PRiSM_reportKeyLine()), 'key line (p_i provisional): ' + U.keyLine());
     const sp = w.PRiSM_dfit_results().pi, f0 = (x) => Math.round(x).toLocaleString('en-US');
     assert(U.keyLine().indexOf('p_i ' + f0(sp.value) + ' psia [' + f0(sp.lo) + '–' + f0(sp.hi) + '] (' + sp.label + ', provisional)') !== -1 && !/±/.test(U.keyLine()), 'key line p_i = the rail bracket and label: ' + U.keyLine());
-    // step ③ cards: closure label and the leak-off type
+    // step ③ cards: closure label (with the hit rate when calibrated) and the leak-off type
     const h = app.document.createElement('div');
     U.panels['dfit-board'].render(h);
-    assert(/provisional — not yet calibrated/.test(h.innerHTML) && !/uncalibrated rule label/.test(h.innerHTML), 'board label is provisional');
-    assert(!/prism-dfit-verdict--ok/.test(h.innerHTML) && !/\b(high|medium|low) confidence\b/.test(h.innerHTML), 'no ✓ closure verdict and no confidence word while uncalibrated');
+    if (met) {
+      const txt = cl.confidence + ' (' + cl.mode + ') — ' + pc(hr.p) + ' % right on ' + hr.n + ' synthetic ' + cl.mode + ' cases (' + pc(hr.lo) + '–' + pc(hr.hi) + ' %)';
+      assert(h.innerHTML.indexOf(txt) !== -1, 'board label with the calibrated hit rate: ' + txt);
+      if (cl.mode === 'single' && cl.confidence === 'high') assert(/prism-dfit-verdict--ok/.test(h.innerHTML) && /high confidence \(calibrated rule label, \d+ % right on synthetic cases\)/.test(h.innerHTML), 'calibrated high: ✓ verdict');
+    } else {
+      assert(/provisional — not yet calibrated/.test(h.innerHTML) && !/uncalibrated rule label/.test(h.innerHTML), 'board label is provisional');
+      assert(!/prism-dfit-verdict--ok/.test(h.innerHTML) && !/\b(high|medium|low) confidence\b/.test(h.innerHTML), 'no ✓ closure verdict and no confidence word while uncalibrated');
+    }
     const hk = app.document.createElement('div');
     U.panels['dfit-classify'].render(hk);
     const kt = hk.innerHTML;
@@ -394,23 +407,39 @@ T.push({
     // report model, export text, WTS_state, grade
     const m = w.PRiSM_dfit_reportModel(run, {});
     const kr = (k) => (m.keyRows.find((r) => r[0] === k) || [])[1] || '';
-    assert(/provisional — not yet calibrated/.test(kr('Closure')) && /provisional — not yet calibrated/.test(kr('p_i')), 'report key rows: ' + kr('Closure') + ' | ' + kr('p_i'));
+    assert((met ? !/provisional/.test(kr('Closure')) : /provisional — not yet calibrated/.test(kr('Closure'))) && /provisional — not yet calibrated/.test(kr('p_i')), 'report key rows: ' + kr('Closure') + ' | ' + kr('p_i'));
+    assert(/\(provisional\)$/.test(kr('Grade')), 'report grade provisional: ' + kr('Grade'));
     const sT = m.sections.find((s) => s.id === 'dfit-type');
     if (sT) assert(/provisional — the leak-off type is not yet calibrated/.test(sT.blocks[0].rows[0][1]), 'report type row: ' + sT.blocks[0].rows[0][1]);
     const vd = m.sections.find((s) => s.id === 'dfit-headline').blocks.find((b) => b.kind === 'verdict');
-    if (run.consensus.mode === 'single') assert(/provisional — not yet calibrated/.test(vd.text) && vd.text.length < 300 && vd.level !== 'ok' && vd.text.charAt(0) === '⚠', 'headline verdict (⚠ while uncalibrated): ' + vd.level + ' ' + vd.text);
+    if (cl.mode === 'single') {
+      const ok = met && cl.confidence === 'high';
+      assert(vd.text.length < 300 && (ok ? vd.level === 'ok' && vd.text.charAt(0) === '✓' && !/provisional/.test(vd.text) : /provisional — not yet calibrated/.test(vd.text) && vd.level !== 'ok' && vd.text.charAt(0) === '⚠'), 'headline verdict: ' + vd.level + ' ' + vd.text);
+    }
     const ex = w.PRiSM_dfit_exportText(run, 'default', {});
-    assert(/# labels: rule labels, provisional — not yet calibrated/.test(ex.text) && /# leak-off type: \S+ \(provisional/.test(ex.text) && /p_i psia [^\n]*provisional\)/.test(ex.text), 'export text labels');
+    assert((met ? /# labels: closure label calibrated on the synthetic benchmark \(\d+ % right on \d+ \w+ cases\); ISIP and p_i labels and the grade are rule labels, provisional — not yet calibrated/.test(ex.text)
+                : /# labels: rule labels, provisional — not yet calibrated/.test(ex.text)) && /# leak-off type: \S+ \(provisional/.test(ex.text) && /p_i psia [^\n]*provisional\)/.test(ex.text), 'export text labels');
     const ws = U.publish();
-    assert(ws.labelsCalibrated === false && /provisional — not yet calibrated/.test(ws.labelNote), 'WTS_state.dfit labelsCalibrated / labelNote');
+    assert(ws.labelsCalibrated === false && /provisional — not yet calibrated/.test(ws.labelNote), 'WTS_state.dfit labelsCalibrated / labelNote: ' + ws.labelNote);
     if (/^[AB]$/.test(run.grade.letter)) assert(/labels provisional, not yet calibrated/.test(run.grade.why[0]), 'grade why: ' + run.grade.why[0]);
-    // a calibrated table (3.4b) drops the closure suffix, but the type stays provisional until it is calibrated itself
-    const cal0 = w.PRiSM_dfit_cal;
+    const pl = (over) => Object.freeze(Object.assign({ calibrated: false, version: null, generator: null, n: 0, hitRate: { single: { high: null, medium: null, low: null }, range: { medium: null, low: null } },
+      intervalScore: { range: null }, cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {} }, over || {}));
     try {
-      w.PRiSM_dfit_cal = Object.assign({}, cal0, { calibrated: true });
-      assert(!/provisional/.test(U.keyLine()) && !U.railRows().some((r) => r[0] === 'Labels'), 'calibrated: no provisional suffix');
+      // the 3.4a placeholder: every closure label provisional again
+      w.PRiSM_dfit_cal = pl();
+      assert(/\((high|medium|low), provisional/.test(U.railRows().find((r) => r[0] === 'Closure')[1]) && U.railRows().find((r) => r[0] === 'Labels')[1] === 'provisional — not yet calibrated', 'placeholder: closure provisional');
+      // a table that calibrates every kind drops every suffix, but the type stays provisional until it is calibrated itself
+      const all = { p: 0.95, lo: 0.9, hi: 0.98, n: 100, met: true, target: null };
+      w.PRiSM_dfit_cal = pl({ calibrated: true, hitRate: { single: { high: all, medium: all, low: all }, range: { medium: all, low: all } },
+        labels: { closure: 'per-cell', isip: true, pi: true, stepDown: true, grade: true }, typeCalibrated: false });
+      assert(!/provisional/.test(U.keyLine()) && !U.railRows().some((r) => r[0] === 'Labels'), 'all calibrated: no provisional suffix: ' + U.keyLine());
       const m2 = w.PRiSM_dfit_reportModel(run, {}), s2 = m2.sections.find((s) => s.id === 'dfit-type');
       if (s2) assert(/provisional/.test(s2.blocks[0].rows[0][1]), 'the type stays provisional');
+      // a cell that missed its target stays provisional although the table is calibrated
+      const miss = Object.assign({}, all, { met: false });
+      w.PRiSM_dfit_cal = pl({ calibrated: true, hitRate: { single: { high: miss, medium: miss, low: miss }, range: { medium: miss, low: miss } },
+        labels: { closure: 'per-cell', isip: false, pi: false, stepDown: false, grade: false }, typeCalibrated: false });
+      assert(/\((high|medium|low), provisional/.test(U.railRows().find((r) => r[0] === 'Closure')[1]), 'missed cell: closure provisional');
     } finally { w.PRiSM_dfit_cal = cal0; }
   },
 });
@@ -425,8 +454,10 @@ T.push({
     const run = await analyseDemo(app, 'reference'), s = w.PRiSM_dfit_results(), z = Number(w.PRiSM_dfit_state().tests[0].inputs.datumTvd);
     const r0 = (x) => Math.round(x);
     const [isip] = num(/ISIP ([\d,]+) psia/); assert.strictEqual(isip, r0(s.isip.value), 'ISIP');
-    const [cl, gr, cLab] = num(/closure ([\d,]+) psia \(([\d.]+) psi\/ft, (\w+), provisional\)/);
+    const [cl, gr, cLab, cWord] = num(/closure ([\d,]+) psia \(([\d.]+) psi\/ft, (\w+), (provisional|calibrated)\)/);
     assert(s.closure.mode === 'single' && cl === r0(s.closure.value) && cLab === s.closure.label, 'closure ' + cl + ' ' + cLab + ' vs ' + JSON.stringify(s.closure));
+    const cc = w.PRiSM_dfit_cal, cellMet = !!(cc && cc.calibrated === true && cc.hitRate.single[cLab] && cc.hitRate.single[cLab].met === true);
+    assert.strictEqual(cWord, cellMet ? 'calibrated' : 'provisional', 'help closure label wording follows the WP8 cell');
     assert.strictEqual(gr, Number((s.closure.value / z).toFixed(3)), 'closure gradient');
     const [pn] = num(/pn ([\d,]+) psi/); assert.strictEqual(pn, r0(s.pn), 'net pressure');
     const [eta] = num(/η ([\d.]+)/); const ch = run.frac && run.frac.chosen && run.frac.chosen.eta;

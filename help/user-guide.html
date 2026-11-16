@@ -1038,7 +1038,7 @@
 <section class="help-sec" id="help-prism-dfit-example"><h5>Worked example</h5>
 <p><b>Reference demo</b></p>
 <p>Result:</p>
-<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.</li></ul>
+<ul><li>ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, calibrated); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.</li></ul>
 </section>
 <section class="help-sec" id="help-prism-dfit-refs"><h5>Standards and references</h5>
 <ul><li>Nolte (1979), SPE 8341</li><li>Barree, Barree and Craig (2009), SPE 107877</li><li>Nolte, Maniere and Owens (1997), SPE 38676</li></ul>
@@ -1046,7 +1046,7 @@
 </section>
 <section class="help-part" id="help-prism-dfit-closure"><h4>DFIT <span class="help-co" aria-label="call-out 2">2</span> ISIP &amp; friction, <span class="help-co" aria-label="call-out 3">3</span> Pre-closure</h4>
 <section class="help-sec" id="help-prism-dfit-closure-what"><h5>What it does</h5>
-<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.</p>
+<p>ISIP from wave, falloff and step-down. Closure from every method, in families (see <a class="bk-x" href="#help-glossary-family">Appendix B</a>) F0–F4: one value within τ, else a range with both ends carried. Closure labels show a synthetic hit rate where calibrated; other labels are provisional.</p>
 </section>
 <section class="help-sec" id="help-prism-dfit-closure-steps"><h5>Step by step</h5>
 <ol class="help-steps"><li>Read the closure board: strip, label, methods, Why, stability.<figure class="help-fig" data-help-shot="prism/dfit-board"><picture><img class="help-img" src="img/prism/dfit-board-d.webp?v=9031b4d9" width="648" height="635" alt="Closure consensus"></picture><figcaption>Closure consensus</figcaption></figure>
@@ -3565,8 +3565,8 @@
 <section class="help-sec" id="help-faq-sand"><h3>Can the simulator train sand handling and a second surge tank?</h3>
 <p>Yes. Switch the optional DS-101 desander and T-202 second surge tank in, in the <b>Rig-up</b> card (Well Test Simulator (see <a class="bk-x" href="#help-wts-top">Chapter 11.1</a>)), then follow exercise 9 (see <a class="bk-x" href="#help-course-ex9">Chapter 11</a>), exercise 10 (see <a class="bk-x" href="#help-course-ex10">Chapter 11</a>) and field scenario FS-3 (see <a class="bk-x" href="#help-fs-FS-3">Chapter 12</a>).</p>
 </section>
-<section class="help-sec" id="help-faq-dfitlabel"><h3>Why is the DFIT closure a range, and the label uncalibrated?</h3>
-<p>Methods read different events and can disagree a lot; PRiSM then carries both ends. Labels are provisional rules, not yet calibrated.</p>
+<section class="help-sec" id="help-faq-dfitlabel"><h3>Why is the DFIT closure a range, and some labels provisional?</h3>
+<p>Methods read different events and can disagree a lot; PRiSM then carries both ends. A closure label shows its synthetic hit rate where it met its target; the rest are provisional rules.</p>
 </section>
 <section class="help-sec" id="help-faq-saved"><h3>Is my work saved?</h3>
 <p>Yes, on this device, as you type. To keep a copy or move it, save a project file (Saving work (see <a class="bk-x" href="#help-start-saving">Chapter 1</a>)).</p>

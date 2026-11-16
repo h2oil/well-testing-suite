@@ -253,7 +253,12 @@ I[8] = {
     const { app } = await refRun(ctx, true);
     const w = app.win;
     const kl = w.PRiSM_reportKeyLine();
-    assert(/^DFIT · closure 7,0\d\d psia \(single, (high|medium|low), provisional\)/.test(kl), 'key line: ' + kl);
+    // a closure label drops ', provisional' only where its WP8 cell met the §8.4 target (49-calc-dfit-cal.js); p_i stays provisional
+    const mm = /^DFIT · closure 7,0\d\d psia \(single, (high|medium|low)(, provisional)?\)/.exec(kl), cal = w.PRiSM_dfit_cal;
+    assert(mm, 'key line: ' + kl);
+    const met = !!(mm && cal && cal.calibrated === true && cal.hitRate.single[mm[1]] && cal.hitRate.single[mm[1]].met === true);
+    assert(mm && !!mm[2] === !met, 'closure suffix follows the calibration cell (met ' + met + '): ' + kl);
+    assert(!/· p_i /.test(kl) || /· p_i [^·]*provisional\)/.test(kl), 'p_i label stays provisional: ' + kl);
     const html = w.WTS_quickReport.preview();
     assert(html.indexOf(kl) !== -1, 'Quick Report carries the DFIT key line');
   },

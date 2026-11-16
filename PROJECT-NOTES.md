@@ -26,6 +26,16 @@ All changes land on `dev`; `master` is the stable tree consumed by the iOS sync 
   each DFIT table once (blocks only, formatted cells, one verdict mark); the designer gains `DesignRanges.shutInGoal` — the default
   ranges use 'outcome' (reference default design: P50 shut-in 634 d → 1.5 d, within the allowed 10 d), stored / engine ranges without
   it keep the radial rule. Files 58, 59, 48-calc-help-production (re-reviewed), `dfit-plan` shot; tests dfit-ui U17–U21.
+- **DFIT WP8 label calibration (lane dfitcal, docs/DFIT-PLAN.md §8.7).** `dfit-validate.js --set all --workers 4 --write` (new `--workers`
+  sharding, identical records to a serial run; ≈ 1.5 min for the 900 cases) generated `49-calc-dfit-cal.js` (calibrated:true, out of fold
+  by seed, 5 folds). The 3.4a rule missed single medium (65.7 % of 216); a tightening-only search of the "cal" low thresholds chose
+  wLow 1 τ / gLow 2.5 τ / R_vis 0.6, giving out of fold single high 97.0 % (lo 91.6 %, n 101) and single medium 87.6 % (lo 81.2 %, n 145) —
+  both met and now shown with their hit rate; lows carry measured rates (single 26.9 %, range 73.5 %); range medium (92.6 % of 27) misses
+  the interval-score condition and stays provisional; ISIP / p_i / step-down labels, the grade and the leak-off type (16.4 % right) stay
+  provisional (`labels.*` / `typeCalibrated` false). 56 reads the thresholds and per-cell `met`; 57 / 59 / triage keep ISIP, p_i and grade
+  provisional; help wording (prism guide example, dfit-closure, FAQ dfitlabel) and the guide stamp updated; new tests/dfit-cal.test.js
+  (CA1–CA4), C2 / I8 / SH2 / RV20 / RV21 follow the table. CUSUM checked (0 % false early on the 20-seed replay), not re-tuned;
+  `--perf` analyseFast 202 ms vs 50 ms was already missed at 3.4a.
 
 ## 2026-11-14 — v4.6 release: Well Dynamics (transient well simulator)
 

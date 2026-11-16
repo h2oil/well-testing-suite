@@ -3,7 +3,7 @@
 // 49-calc-dfit-cal.js. Plan: docs/DFIT-PLAN.md §8.2–§8.5 and §9 WP5 (this tool) / WP8 (runs it, 3.4b).
 //
 //   node prism-build/dfit-validate.js [--set pre|aca|art|all] [--quick] [--perf] [--seed n] [--folds 5] [--write]
-//        [--out <dir>] [--cases id,…] [--strict] [--json] [--cal-out <file>] [--limit n]
+//        [--out <dir>] [--cases id,…] [--strict] [--json] [--cal-out <file>] [--limit n] [--workers n]
 //
 //   --set s       the benchmark set: pre (720 pre-closure cases), aca (120 after-closure), art (60 artefacts), all (900; default)
 //   --quick       the 12-case quick set (PRiSM_dfit_synth.cases('quick')) plus the 20-seed live false-call replay of the reference,
@@ -16,6 +16,8 @@
 //                 was scored (the engines are not there yet), so the placeholder is never replaced by an empty table
 //   --cases a,b   only these case ids (looked up in the integration, quick and benchmark lists)
 //   --limit n     only the first n cases of the selection (dry runs)
+//   --base-rule   label the cases with the 3.4a rule (placeholder table), whatever 49-calc-dfit-cal.js holds (implied by --write)
+//   --workers n   run the cases in n child processes (--shard k/n --recs-out f is the worker's own call); same records as a serial run
 //   --out dir     report folder (default $TMPDIR/wts-dfit-validate): dfit-validate.json and dfit-validate.md — never committed
 //   --strict      exit 1 when a target is missed (quick checks, budgets, hit-rate targets)
 //   --json        print the summary JSON on stdout
@@ -66,6 +68,10 @@ function loadEnv() {
   const W = app.win;
   const S = W.PRiSM_dfit_synth;
   if (flag('--stub-engine')) installStubEngine(W);
+  // --write (and its workers, --base-rule) label every case with the 3.4a rule: the threshold search re-labels from those labels and
+  // only tightens, so a run on an already calibrated table would not be able to loosen it again
+  if (flag('--write') || flag('--base-rule')) W.PRiSM_dfit_cal = Object.freeze({ calibrated: false, version: null, generator: null, n: 0,
+    hitRate: { single: { high: null, medium: null, low: null }, range: { medium: null, low: null } }, intervalScore: { range: null }, cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {} });
   const missing = [];
   if (!S || typeof S.make !== 'function' || S.make._dfitStub) missing.push('PRiSM_dfit_synth (49-calc-dfit-synth.js, WP5)');
   const engines = {
@@ -127,7 +133,21 @@ function runCase(env, spec, seed) {
   rec.status = 'scored';
   rec.score = JSON.parse(JSON.stringify(S.score(run, m.truth)));
   rec.counts = run.counts ? JSON.parse(JSON.stringify(run.counts)) : null;
+  rec.cons = consFeatures(run);
   return rec;
+}
+
+// the consensus label evidence of one run (§4.22 "cal" quantities), so a threshold search re-labels the cases without re-running them:
+// tau, w, s, g, the K-rule values / fired flags, R_vis, chi and, for single mode, the P10–P90 width of the voting-family bands
+function consFeatures(run) {
+  const c = run.consensus;
+  if (!c || c.ok === false) return null;
+  const rv = {}, rf = {};
+  (c.rules || []).forEach((r) => { rv[r.id] = fin(r.value) ? r.value : null; rf[r.id] = !!r.fired; });
+  let lo = Infinity, hi = -Infinity;
+  ['F1', 'F2', 'F4'].forEach((f) => { const st = c.families && c.families[f]; if (st && fin(st.p10) && fin(st.p90)) { lo = Math.min(lo, st.p10); hi = Math.max(hi, st.p90); } });
+  return { mode: c.mode, conf: c.confidence, tau: c.tau, w: c.metrics && c.metrics.w, s: c.metrics && c.metrics.s, g: c.metrics && c.metrics.g,
+           Rvis: c.chain ? c.chain.Rvis : null, chi: c.chain ? c.chain.chi : null, rv, rf, bandWidth: lo <= hi ? +(hi - lo).toFixed(2) : null };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -173,33 +193,98 @@ function aggregate(recs) {
 }
 function med(a) { const s = a.filter(fin).sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; }
 
-// calibration table (§8.4), folds by seed (seed mod k). 3.4a tunes no threshold (thresholds: {}), so every case is out of fold
-// for every fold and the headline hit rates are POOLED over all scored cases; the per-fold Wilson rates are reported next to them
-// (folds.byLabel, folds.spread = max − min of the fold rates) so their spread is visible. The fold machinery that holds a fold
-// out of a threshold search is WP8's (3.4b).
+// calibration table (§8.4, WP8). Folds by seed (seed mod k). The "cal" label thresholds of §4.22 are searched on a grid that only
+// TIGHTENS the 3.4a rule (low when w > wLow·τ, g > gLow·τ or R_vis < rvisLow; 3.4a = 2.5 / 2.5 / 0.3), so 'high' and the mode never
+// change and a case is re-labelled from its recorded evidence (rec.cons) without a re-run. Selection on the training folds: the
+// single-mode §8.4 targets met (single high p ≥ 0.90 and Wilson lo ≥ 0.85, single medium p ≥ 0.70 and lo ≥ 0.60; required), then the
+// range-medium rate target (p ≥ 0.70) met where possible, then the largest single-medium Wilson lower bound, then the least tightening. The headline hit rates are OUT OF FOLD (each fold labelled with
+// the thresholds chosen on the other folds); the shipped thresholds are the choice on all folds. A cell is 'met' (calibrated, its rate
+// shown) only when its out-of-fold rate meets its §8.4 target; low cells have no target and carry their measured rate (met, target
+// null). Range medium also needs a mean interval score no worse than the mean single-mode P10–P90 width of the same strata.
+const CAL_GRID = { wLow: [2.5, 2.25, 2, 1.75, 1.5, 1.25, 1], gLow: [2.5, 2.25, 2, 1.75, 1.5, 1.25, 1], rvisLow: [0.3, 0.4, 0.5, 0.6, 0.7] };
+const TH0 = { wLow: 2.5, gLow: 2.5, rvisLow: 0.3 };
+const CELLS = [['single', 'high'], ['single', 'medium'], ['single', 'low'], ['range', 'medium'], ['range', 'low']];
+function relabel(r, th) {
+  const c = r.cons, l = r.score.labels.closure;
+  if (!c || c.mode === 'none' || l === 'low' || l === 'not-estimable' || !fin(c.tau)) return l;
+  const low = (fin(c.w) && c.w > th.wLow * c.tau) || (fin(c.g) && c.g > th.gLow * c.tau) || (fin(c.Rvis) && c.Rvis < th.rvisLow);
+  return low ? 'low' : l;
+}
+function cellCounts(set, th) {
+  const o = {};
+  set.forEach((r) => { const m = r.score.closure.mode; if (m !== 'single' && m !== 'range') return; const k = m + '.' + relabel(r, th); o[k] = o[k] || { n: 0, k: 0 }; o[k].n++; if (r.score.closure.right) o[k].k++; });
+  return o;
+}
+function singleMet(o) {
+  const w = (key) => (o[key] ? wilson(o[key].k, o[key].n) : null), sh = w('single.high'), sm = w('single.medium');
+  return (!sh || (sh.p >= TARGETS.singleHigh && sh.lo >= TARGETS.singleHighLo)) && (!!sm && sm.p >= TARGETS.singleMedium && sm.lo >= TARGETS.singleMediumLo);
+}
+function rangeMet(o) { const r = o['range.medium']; return !r || r.k / r.n >= TARGETS.rangeMedium; }
+// lexicographic: single targets met (required), range-medium rate target met, largest single-medium Wilson lower bound, least tightening
+function chooseThresholds(set) {
+  let best = null;
+  CAL_GRID.wLow.forEach((wl) => CAL_GRID.gLow.forEach((gl) => CAL_GRID.rvisLow.forEach((rl) => {
+    const th = { wLow: wl, gLow: gl, rvisLow: rl }, o = cellCounts(set, th);
+    if (!singleMet(o)) return;
+    const key = [rangeMet(o) ? 1 : 0, wilson(o['single.medium'].k, o['single.medium'].n).lo, -((2.5 - wl) + (2.5 - gl) + 5 * (rl - 0.3))];
+    const better = !best || key[0] > best.key[0] || (key[0] === best.key[0] && (key[1] > best.key[1] + 1e-12 || (Math.abs(key[1] - best.key[1]) <= 1e-12 && key[2] > best.key[2] + 1e-12)));
+    if (better) best = { th, key };
+  })));
+  return best ? best.th : null;
+}
+const stratum = (r) => r.id.replace(/-\d+$/, '');
 function calibrate(recs, folds) {
   const scored = recs.filter((r) => r.status === 'scored');
-  const rateOf = (set, mode, lb) => { const s = set.filter((r) => r.score.closure.mode === mode && r.score.labels.closure === lb); return s.length ? wilson(s.filter((r) => r.score.closure.right).length, s.length) : null; };
-  const cell = (mode, lb) => rateOf(scored, mode, lb);
-  const range = scored.filter((r) => r.score.closure.mode === 'range').map((r) => r.score.closure.intervalScore).filter(fin);
-  const foldSets = []; for (let f = 0; f < folds; f++) foldSets.push(scored.filter((r) => (r.seed % folds) === f));
-  const foldN = foldSets.map((s) => s.length);
-  const CELLS = [['single', 'high'], ['single', 'medium'], ['single', 'low'], ['range', 'medium'], ['range', 'low']];
-  const byLabel = {}, spread = {};
+  const haveCons = scored.filter((r) => r.score.closure.mode !== 'none').every((r) => r.cons);
+  // out-of-fold labels
+  const oofLabel = new Map(), foldChoice = [];
+  for (let f = 0; f < folds; f++) {
+    const train = scored.filter((r) => (r.seed % folds) !== f), test = scored.filter((r) => (r.seed % folds) === f);
+    const th = (haveCons && chooseThresholds(train)) || TH0;
+    foldChoice.push(Object.assign({ fold: f, nTrain: train.length, nTest: test.length, searched: haveCons }, th));
+    test.forEach((r) => oofLabel.set(r, relabel(r, th)));
+  }
+  const thAll = (haveCons && chooseThresholds(scored)) || null;
+  const thShip = thAll || TH0;
+  const rateOf = (set, mode, lb, lab) => { const s = set.filter((r) => r.score.closure.mode === mode && lab(r) === lb); return s.length ? wilson(s.filter((r) => r.score.closure.right).length, s.length) : null; };
+  const oof = (r) => oofLabel.get(r), insample = (r) => relabel(r, thShip), base = (r) => r.score.labels.closure;
+  // range medium interval score against the single-mode P10–P90 band width of the same strata
+  const rangeMed = scored.filter((r) => r.score.closure.mode === 'range' && oof(r) === 'medium' && fin(r.score.closure.intervalScore));
+  const widthBy = {};
+  scored.forEach((r) => { if (r.score.closure.mode === 'single' && r.cons && fin(r.cons.bandWidth)) (widthBy[stratum(r)] = widthBy[stratum(r)] || []).push(r.cons.bandWidth); });
+  const pairs = rangeMed.filter((r) => widthBy[stratum(r)]).map((r) => [r.score.closure.intervalScore, widthBy[stratum(r)].reduce((a, b) => a + b, 0) / widthBy[stratum(r)].length]);
+  const mean = (a) => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : null);
+  const isChk = { n: pairs.length, nRangeMedium: rangeMed.length, meanIntervalScore: mean(pairs.map((x) => x[0])), meanSingleWidth: mean(pairs.map((x) => x[1])) };
+  isChk.ok = pairs.length > 0 && isChk.meanIntervalScore <= isChk.meanSingleWidth;
+  const hitRate = { single: {}, range: {} }, inSample = { single: {}, range: {} }, uncal = { single: {}, range: {} };
   CELLS.forEach(([mode, lb]) => {
-    const key = mode + '.' + lb, rows = foldSets.map((s) => rateOf(s, mode, lb));
-    byLabel[key] = rows;
-    const ps = rows.filter((r) => r && fin(r.p)).map((r) => r.p);
-    spread[key] = ps.length >= 2 ? +(Math.max.apply(null, ps) - Math.min.apply(null, ps)).toFixed(4) : null;
+    const h = rateOf(scored, mode, lb, oof);
+    inSample[mode][lb] = rateOf(scored, mode, lb, insample);
+    uncal[mode][lb] = rateOf(scored, mode, lb, base);
+    if (!h) { hitRate[mode][lb] = null; return; }
+    let target = null, met;
+    if (mode === 'single' && lb === 'high') { target = { p: TARGETS.singleHigh, lo: TARGETS.singleHighLo }; met = h.p >= target.p && h.lo >= target.lo; }
+    else if (mode === 'single' && lb === 'medium') { target = { p: TARGETS.singleMedium, lo: TARGETS.singleMediumLo }; met = h.p >= target.p && h.lo >= target.lo; }
+    else if (mode === 'range' && lb === 'medium') { target = { p: TARGETS.rangeMedium, lo: null, intervalScore: 'no worse than the single-mode P10-P90 width of the same strata' }; met = h.p >= target.p && isChk.ok; }
+    else met = true;                                         // low labels: no §8.4 target, the measured rate is shown
+    hitRate[mode][lb] = Object.assign({}, h, { met, target });
   });
+  const range = scored.filter((r) => r.score.closure.mode === 'range').map((r) => r.score.closure.intervalScore).filter(fin);
+  const otherRate = (key) => { const s = scored.filter((r) => r.score[key] && (key !== 'pi' || r.score.pi.err != null || r.score.pi.partial)); return wilson(s.filter((r) => r.score[key].right).length, s.length); };
   return {
-    calibrated: true, version: 'g1-' + new Date().toISOString().slice(0, 10), generator: 'g1', n: scored.length,
-    hitRate: { single: { high: cell('single', 'high'), medium: cell('single', 'medium'), low: cell('single', 'low') },
-               range: { medium: cell('range', 'medium'), low: cell('range', 'low') } },
-    intervalScore: { range: range.length ? +(range.reduce((a, b) => a + b, 0) / range.length).toFixed(1) : null },
-    cusum: { k: 0.5, h: 5, decimate: '2L' }, thresholds: {},
-    folds: { k: folds, n: foldN, pooled: true, note: '3.4a: no threshold is tuned, so the hit rates are pooled over all folds; per-fold rates in byLabel, spread = max - min',
-             byLabel: byLabel, spread: spread },
+    calibrated: true, version: 'g1-wp8-' + new Date().toISOString().slice(0, 10), generator: 'g1', n: scored.length,
+    hitRate: hitRate,
+    intervalScore: { range: range.length ? +(range.reduce((a, b) => a + b, 0) / range.length).toFixed(1) : null, rangeMedium: isChk },
+    cusum: { k: 0.5, h: 5, decimate: '2L' },
+    thresholds: thAll ? { wLow: thAll.wLow, gLow: thAll.gLow, rvisLow: thAll.rvisLow } : {},
+    // only the closure labels are calibrated by this benchmark (§8.4); the others keep their provisional wording
+    labels: { closure: 'per-cell', isip: false, pi: false, stepDown: false, grade: false },
+    typeCalibrated: false,
+    benchmark: { classify: otherRate('classify'), isip: otherRate('isip'), pi: otherRate('pi'),
+                 note: 'measured for information; no §8.4 target exists for these, so their labels stay provisional and the leak-off type has no confidence' },
+    inSample: inSample, uncalibrated: uncal,
+    folds: { k: folds, n: foldChoice.map((x) => x.nTest), pooled: false, choice: foldChoice,
+             note: 'hitRate = out of fold (each fold labelled with thresholds chosen on the other folds); inSample = the shipped thresholds on all cases; uncalibrated = the 3.4a rule' },
   };
 }
 function calSource(tbl) {
@@ -220,14 +305,15 @@ function calSource(tbl) {
     + '//\n'
     + '// window.PRiSM_dfit_cal — the DFIT confidence-label calibration table (docs/DFIT-PLAN.md §3.9, §8.4), measured on ' + tbl.n + ' synthetic\n'
     + '// cases (generator ' + tbl.generator + '). Loads with no document and no other symbol; the table is deep-frozen.\n'
-    + '// 3.4a hit rates are POOLED over the ' + (tbl.folds ? tbl.folds.k : '–') + ' seed folds because no threshold was tuned; the per-fold\n'
-    + '// rates and their spread are in folds.byLabel / folds.spread (the out-of-fold threshold search is WP8, 3.4b).\n'
+    + '// WP8 (3.4b): hit rates are OUT OF FOLD over ' + (tbl.folds ? tbl.folds.k : '–') + ' seed folds; thresholds = the tightened "cal" label thresholds\n'
+    + '// chosen on all folds; a (mode, label) cell is calibrated only where met is true. ISIP / p_i / step-down labels, the grade\n'
+    + '// and the leak-off type are not calibrated by this benchmark (labels.*, typeCalibrated false).\n'
     + '// =============================================================================\n\n'
     + '(function () {\n    \'use strict\';\n    var G = (typeof window !== \'undefined\') ? window : globalThis;\n'
     + '    function freeze(o) { if (o && typeof o === \'object\' && !Object.isFrozen(o)) { Object.freeze(o); Object.keys(o).forEach(function (k) { freeze(o[k]); }); } return o; }\n'
     + '    G.PRiSM_dfit_cal = freeze(' + JSON.stringify(tbl, null, 4).replace(/\n/g, '\n    ') + ');\n})();\n\n'
     + '// === SELF-TEST ===\n(function () {\n    \'use strict\';\n    var G = (typeof window !== \'undefined\') ? window : globalThis, c = G.PRiSM_dfit_cal;\n'
-    + '    if ((!c || c.calibrated !== true || !c.cusum) && typeof console !== \'undefined\') console.warn(\'[49-calc-dfit-cal self-test] table\');\n})();\n';
+    + '    if ((!c || c.calibrated !== true || !c.cusum || !c.labels) && typeof console !== \'undefined\') console.warn(\'[49-calc-dfit-cal self-test] table\');\n})();\n';
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -400,6 +486,29 @@ function markdown(sum) {
   return L.join('\n');
 }
 
+// --workers n: n child processes, each runs every n-th case (--shard k/n) with the seed of its index in the full list, so the merged
+// records equal a serial run; the parent aggregates, calibrates and writes as usual
+function runWorkers(list, n, outDir) {
+  const { spawn } = require('child_process');
+  fs.mkdirSync(outDir, { recursive: true });
+  const drop = new Set(['--workers', '--write', '--quick', '--perf', '--cal-out', '--json', '--strict']);
+  const base = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (drop.has(argv[i])) { if (['--workers', '--cal-out'].includes(argv[i])) i++; continue; }
+    base.push(argv[i]);
+  }
+  const jobs = [];
+  for (let k = 0; k < n; k++) {
+    const file = path.join(outDir, 'dfit-recs-' + k + '.json');
+    jobs.push(new Promise((res, rej) => {
+      const extra = flag('--write') ? ['--base-rule'] : [];
+      const ch = spawn(process.execPath, [__filename].concat(base, extra, ['--shard', k + '/' + n, '--recs-out', file, '--out', outDir]), { stdio: ['ignore', 'inherit', 'inherit'] });
+      ch.on('exit', (c) => (c === 0 ? res(JSON.parse(fs.readFileSync(file, 'utf8'))) : rej(new Error('worker ' + k + ' exit ' + c))));
+    }));
+  }
+  return Promise.all(jobs).then((parts) => [].concat.apply([], parts).sort((a, b) => a.index - b.index));
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // main
 // ═════════════════════════════════════════════════════════════════════════════
@@ -418,12 +527,26 @@ async function main() {
     const list = selectCases(S);
     console.log('[validate] ' + list.length + ' cases' + (env.engines.pipeline ? '' : ' (PRiSM_dfit_pipeline is not implemented yet: cases are generated, not scored)'));
     const t0 = nowMs();
-    list.forEach((spec, i) => {
-      const seed = spec.seed ? spec.seed + base - 1 : base + i;
-      const r = runCase(env, spec, seed);
-      recs.push(r);
-      if ((i + 1) % 50 === 0 || i === list.length - 1) console.log('[validate] ' + (i + 1) + '/' + list.length + '  ' + ((nowMs() - t0) / 1000).toFixed(1) + ' s');
-    });
+    const shard = val('--shard', null), workers = Math.max(1, parseInt(val('--workers', '1'), 10) || 1);
+    const sh = shard ? shard.split('/').map((x) => parseInt(x, 10)) : null;
+    if (!sh && workers > 1) recs = await runWorkers(list, workers, outDir);
+    else {
+      let done = 0;
+      list.forEach((spec, i) => {
+        if (sh && i % sh[1] !== sh[0]) return;
+        const seed = spec.seed ? spec.seed + base - 1 : base + i;   // the seed follows the index in the full list, so shards reproduce a serial run
+        const r = runCase(env, spec, seed);
+        r.index = i;
+        recs.push(r);
+        done++;
+        if (done % 25 === 0 || i === list.length - 1) console.log('[validate] ' + (sh ? 'shard ' + shard + ' ' : '') + done + ' done (case ' + (i + 1) + '/' + list.length + ')  ' + ((nowMs() - t0) / 1000).toFixed(1) + ' s');
+      });
+    }
+    if (sh) {   // a worker: hand the records to the parent and stop
+      fs.writeFileSync(val('--recs-out'), JSON.stringify(recs));
+      try { env.app.dispose && env.app.dispose(); } catch (e) { /* ignore */ }
+      return 0;
+    }
     sum.agg = aggregate(recs);
     const a = sum.agg.closure;
     if (sum.agg.scored) {
@@ -448,7 +571,10 @@ async function main() {
     else {
       const f = val('--cal-out', CAL_FILE);
       fs.writeFileSync(f, calSource(tbl));
-      sum.write = 'wrote ' + path.relative(process.cwd(), f) + ' (n ' + tbl.n + ')';
+      const cells = [];
+      ['single', 'range'].forEach((m) => Object.keys(tbl.hitRate[m]).forEach((lb) => { const h = tbl.hitRate[m][lb]; if (h) cells.push(m + ' ' + lb + ' ' + pct(h.p) + ' (' + pct(h.lo) + '–' + pct(h.hi) + ', n ' + h.n + ')' + (h.met ? (h.target ? ' met' : ' measured') : ' MISSED')); }));
+      sum.write = 'wrote ' + path.relative(process.cwd(), f) + ' (n ' + tbl.n + '); out of fold: ' + cells.join('; ') + '; thresholds ' + JSON.stringify(tbl.thresholds)
+        + '; fold choices ' + tbl.folds.choice.map((c) => c.wLow + '/' + c.gLow + '/' + c.rvisLow).join(', ') + '; range-medium interval score ' + JSON.stringify(tbl.intervalScore.rangeMedium);
       console.log('[validate] ' + sum.write);
     }
   }
@@ -461,11 +587,11 @@ async function main() {
   if (sum.quick) Object.keys(sum.quick).forEach((k) => console.log('[validate] quick ' + k + ': ' + (sum.quick[k].skipped ? 'skipped — ' + sum.quick[k].skipped : (sum.quick[k].ok ? 'ok' : 'MISSED'))));
   if (sum.perf) Object.keys(sum.perf).forEach((k) => { const r = sum.perf[k]; console.log('[validate] perf ' + k + ': ' + (r.skipped ? 'skipped — ' + r.skipped : r.ms + ' ms' + (r.budget ? ' / ' + r.budget + (r.ok ? ' ok' : ' MISSED') : ''))); });
   if (flag('--json')) console.log(JSON.stringify(sum, null, 1));
-  if (missed.length) console.log('[validate] targets missed: ' + missed.join('; '));
+  if (missed.length) console.log('[validate] targets missed: ' + missed.join('; ') + (flag('--write') || flag('--base-rule') ? ' (case labels from the 3.4a rule; the calibrated table is above)' : ''));
   try { env.app.dispose && env.app.dispose(); } catch (e) { /* ignore */ }
   if (strict && missed.length) code = 1;
   return code;
 }
 
 if (require.main === module) main().then((c) => process.exit(c), (e) => { console.error('[validate] crash: ' + (e && e.stack || e)); process.exit(2); });
-module.exports = { wilson, aggregate, calibrate, calSource, TARGETS, BUDGETS };
+module.exports = { wilson, aggregate, calibrate, calSource, relabel, chooseThresholds, TARGETS, BUDGETS, CAL_GRID };

@@ -3090,10 +3090,15 @@
             { id: 'K10', fired: fricFired, value: _r(fric.veto, 1), threshold: _r(fric.warn, 1), text: fricFired ? 'The closure lies below a frictional-limit line.' : 'The closure lies above both frictional-limit lines.' }
         ];
         rules.forEach(function (r) { r.text = _txt(r.text); });
+        // label thresholds marked "cal" in §4.22: the 3.4a rule values (low: w or g > 2.5 τ, R_vis < 0.3) unless the WP8 table
+        // (49-calc-dfit-cal.js, calibrated:true) carries tightened ones (thresholds.wLow / gLow in units of τ, rvisLow); WP8 only
+        // tightens (wLow, gLow ≤ 2.5; rvisLow ≥ 0.3), so 'high' and the mode are unchanged by it
+        var calTh = (G.PRiSM_dfit_cal && G.PRiSM_dfit_cal.calibrated === true && _isObj2(G.PRiSM_dfit_cal.thresholds)) ? G.PRiSM_dfit_cal.thresholds : {};
+        var kWl = _fin(calTh.wLow) ? Math.min(2.5, calTh.wLow) : 2.5, kGl = _fin(calTh.gLow) ? Math.min(2.5, calTh.gLow) : 2.5, rvL = _fin(calTh.rvisLow) ? Math.max(0.3, calTh.rvisLow) : 0.3;
         var conf;
         if (mode === 'none') conf = 'not-estimable';
         else {
-            var low = w > 2.5 * tau || g > 2.5 * tau || (Rvis !== null && Rvis < 0.3) || depWeak || overlapFlag;
+            var low = w > kWl * tau || g > kGl * tau || (Rvis !== null && Rvis < rvL) || depWeak || overlapFlag;
             var high = mode === 'single' && !rules.slice(1).some(function (r) { return r.fired; });
             conf = low ? 'low' : (high ? 'high' : 'medium');
         }
@@ -3153,10 +3158,12 @@
             var fc2 = G.PRiSM_dfit_forecastClosure(derivs, { isip: isip, inputs: ctx.inputs }, ctx.forecastSigmas);
             forecast = Array.isArray(fc2) && fc2.length ? fc2 : null;
         }
-        var calTab = G.PRiSM_dfit_cal, calibrated = !!(calTab && calTab.calibrated === true), hitRate = null;
-        if (calibrated && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
+        // a label is calibrated only where its (mode, label) cell of the WP8 table met the §8.4 target out of fold (cell.met); other
+        // cells keep the provisional rule-label wording and show no hit rate
+        var calTab = G.PRiSM_dfit_cal, calibrated = false, hitRate = null;
+        if (calTab && calTab.calibrated === true && mode !== 'none' && calTab.hitRate && calTab.hitRate[mode] && calTab.hitRate[mode][conf]) {
             var hrr = calTab.hitRate[mode][conf];
-            if (_isObj2(hrr) && _fin(hrr.p)) hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode };
+            if (_isObj2(hrr) && _fin(hrr.p) && hrr.met === true) { calibrated = true; hitRate = { p: hrr.p, lo: hrr.lo, hi: hrr.hi, n: hrr.n, mode: mode }; }
         }
         return {
             ok: true, mode: mode, value: value, range: range, families: fams, tau: _r(tau, 2), metrics: { w: _r(w, 2), s: _r(s, 2), g: _r(g, 2) },
