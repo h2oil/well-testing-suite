@@ -8,7 +8,8 @@
 //
 //   C1  toy contact (exp aperture law, f_res 0.10, s_c 100): F1 6,998 ± 5, F2 6,507 ± 10, √t same evidence as the tangent,
 //       mode range [P10(F2), P90(F1)] with both medians, χ(F2) ≈ 1.44, label medium
-//   C2  pure Carter normal leak-off: s ≤ τ → single, label high
+//   C2  pure Carter normal leak-off: s ≤ τ → single, label high (calibrated with the table's hit rate when the WP8 single-high
+//       cell met its target, else the provisional rule label)
 //   C3  PDL hump: the tangent excludes the hump (pick after G_fo); F0 = p_fo within 15 psi
 //   C4  low visibility (gas-filled wellbore, storage-consistent R_vis 0.54): label medium or low, the R_vis rule fired
 //   C5  closure not reached → mode none, not estimable, forecast shown
@@ -118,7 +119,10 @@ module.exports = [
       near(assert, c.tau, 21, 0.5, 'τ = max(15, 0.3 % σ_c, 3 % pn)');
       assert.strictEqual(c.confidence, 'high', 'label high; fired rules: ' + c.rules.filter((x) => x.fired).map((x) => x.id).join(','));
       assert(c.rules.length === 10 && c.rules.every((x) => /^K\d+$/.test(x.id)), 'ten K rules listed');
-      assert(c.calibrated === false && c.hitRate === null && /provisional rule label — not yet calibrated/.test(c.label), 'provisional, not yet calibrated rule label (3.4a)');
+      // WP8 (3.4b): a label is calibrated only where its (mode, label) cell of 49-calc-dfit-cal.js met the §8.4 target out of fold
+      const cal = G.PRiSM_dfit_cal, cell = cal && cal.calibrated === true && cal.hitRate.single.high;
+      if (cell && cell.met === true) assert(c.calibrated === true && c.hitRate && c.hitRate.p === cell.p && c.hitRate.n === cell.n && c.hitRate.mode === 'single' && c.label === 'high', 'calibrated single-high label with the table hit rate: ' + JSON.stringify(c.hitRate) + ' ' + c.label);
+      else assert(c.calibrated === false && c.hitRate === null && /provisional rule label — not yet calibrated/.test(c.label), 'provisional, not yet calibrated rule label');
       const lite = G.PRiSM_dfit_consensusLite(r.picks, r.d, r.cctx);
       okShape(assert, 'ConsensusLite', lite); assert(lite.mode === 'single' && Math.abs(lite.value - c.value) < 5, 'consensusLite agrees (single)');
     },

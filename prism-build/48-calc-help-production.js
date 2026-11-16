@@ -26,7 +26,7 @@ function df(id, t, c, n, more) {
     setup: [{ action: 'prismDfit' }].concat(n ? [{ action: 'prismStep', args: n }, { scroll: t }] : [], more || []) };
 }
 var prism = {
-  route: 'prism', reviewed: 'v3.4.1', reviewedSrc: '39cfa292', units: 'field',
+  route: 'prism', reviewed: 'v4.6.1', reviewedSrc: 'fa6ca1e9', units: 'field',
   keywords: ['well test analysis', 'pressure transient', 'PTA', 'derivative', 'skin', 'DFIT'],
   purpose: 'Interprets a pressure test: load the data, pick the period, read the derivative, fit a model, report k, [[glossary#skin|skin]] and storage.',
   what: ['Five steps, ① Data to ⑤ Report, in the step bar.',
@@ -92,10 +92,10 @@ var prism = {
   { id: 'dfit', title: 'DFIT mode', what: ['Fracture injection falloff: [[glossary#isip|ISIP]], [[glossary#closure|closure]], [[glossary#netp|net pressure]], [[glossary#fluideff|fluid efficiency]], leak-off, p_i and k. Field units only.'],
     steps: ['Select Test **DFIT (fracture injection)**.', 'Load demo DFIT fills the well and analyses at once. Or load your record (rate in bbl/min), enter the datum TVD and wellbore, tick psig channels and select ▶ Analyse DFIT.',
       { t: 'Read the triage checks, re-pump verdict and grade A–D (provisional).', shot: 'dfit-tri' }, 'A blunder card: Apply fix or It is real (logged).'],
-    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, provisional); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
+    example: { title: 'Reference demo', result: ['ISIP 7,599 psia; closure 7,003 psia (0.700 psi/ft, high, calibrated); pn 596 psi; η 0.898; p_i 4,496 psia [4,491–4,721] (medium, provisional); grade B, provisional.'],
       check: { kind: 'manual', reason: 'asynchronous DFIT run' } },
     refs: [rf('Nolte (1979), SPE 8341'), rf('Barree, Barree and Craig (2009), SPE 107877'), rf('Nolte, Maniere and Owens (1997), SPE 38676')] },
-  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Labels: provisional, not calibrated.'],
+  { id: 'dfit-closure', title: 'DFIT ② ISIP & friction, ③ Pre-closure', what: ['ISIP from wave, falloff and step-down. Closure from every method, in [[glossary#family|families]] F0–F4: one value within τ, else a range with both ends carried. Closure labels show a synthetic hit rate where calibrated; other labels are provisional.'],
     steps: [{ t: 'Read the closure board: strip, label, methods, Why, stability.', shot: 'dfit-board' }, 'A pick under the frictional limit is vetoed.',
       'Override with Use another value and a reason.', 'Read the provisional leak-off type ([[glossary#pdl|PDL]]…), η, pn, [[glossary#rvis|R_vis]], CL, geometry, what-if.'] },
   { id: 'dfit-aca', title: 'DFIT ④ After closure & model', what: ['[[glossary#aca|After-closure]] p_i with bracket; kh/μ or k bounds; leak check.'],
