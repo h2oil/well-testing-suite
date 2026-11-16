@@ -119,9 +119,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
-    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
-    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
-    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP5 replaces the WP0 stub file: its names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -1839,6 +1839,7 @@
     NS.SCAN_FRACS = SCAN_FRACS.slice(); NS.TOL_P = TOL_P; NS.TOL_Q = TOL_Q; NS.GILBERT_YC = GILBERT_YC; NS.LOAD = LOAD; NS.HEADING_FRAC = HEADING_FRAC;
     G.WTS_wp_loading = loading;
     G.WTS_wp_check = check;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

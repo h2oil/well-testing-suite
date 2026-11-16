@@ -153,9 +153,9 @@
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
-    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
-    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
-    var _GO = (typeof globalThis !== 'undefined' ? globalThis : G), Math = _GO.Math, isFinite = _GO.isFinite, Number = _GO.Number, Object = _GO.Object;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite / Number / Object as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite, Number, Object) {
 
     // ── Constants ────────────────────────────────────────────────────
     var GRAV = 32.174, GC = 32.174;         // ft/s², lbm·ft/(lbf·s²)
@@ -1707,6 +1707,7 @@
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcFlowline();
         });
     }
+    })(Math, isFinite, Number, Object);
 })();
 
 // === SELF-TEST ===

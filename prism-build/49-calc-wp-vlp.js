@@ -98,9 +98,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
-    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
-    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
-    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var GRAV = 32.174, GC = 32.174;            // ft/s², lbm·ft/(lbf·s²)
     var PATM = 14.696;                         // psia (the marcher's atmosphere)
@@ -1625,6 +1625,7 @@
             var i = STUBS.indexOf(n); if (i >= 0) STUBS.splice(i, 1);
         });
     }
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===

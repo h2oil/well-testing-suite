@@ -2109,6 +2109,47 @@ fully, B card screenshots included. (The task named this record §18.3.12; that 
   25,854 B, esp-p 25,916 B. Caps (measured): production 57.6 → 59.2 kB (58,824 B); wellperf guide 21.75 → 23.5 kB (23,892 B serialised);
   images 8,113,704 B under the 8.15 MB cap (unchanged); SUM_CAP / GZIP_CAP unchanged (measured 379,816 B raw, 132,221 B gzip).
 
+#### 18.3.14 4.6.1 follow-up record — Well Performance open items (2026-11-16, branch f461/wpperf)
+
+The three items left open since A1 (§18.1, PROJECT-NOTES 4.3 / 4.4), on top of 4.6 (939f9d8). No calculation result changes.
+
+- **Stale study results.** The review round of A1 (WRV19) already marked a 1-variable sensitivity, the heat map, the bean schedule
+  and the gas-lift curve stale on the next solve after an input change, and the Studies card compares its own keys (envelope,
+  forecast, tornado, matrix, cases, screening) when it renders; the open item stayed in the notes. The real gap was the Solve-button
+  mode (a slow device, `ST.slow`): the page skipped the solve and nothing was marked until the next Solve. `_staleStudies(M, redraw)`
+  (49-calc-wellperf.js) now sets the flags in both paths and, in Solve-button mode, re-draws the sensitivity / heat-map table, the bean
+  schedule, the gas-lift card and the Studies card at once ("previous inputs — re-run …" chip, dimmed rows); a re-run stores a new
+  result with the new model key, so the mark clears; an input set back to the run's value is not stale (the key is the model).
+  Tests: wellperf-followup WFU1 (1-variable, normal and Solve-button mode, Solve keeps the mark, re-run clears it), WFU2 (heat map,
+  tornado, Solve-button mode).
+- **All-tests (RMS) traverse plot.** `WTS_wp_match.compare(M, tests[])` keeps each test's march per correlation
+  (`rows[].perTest[].profile`, the same decimated profile as a single-test run) and `perTestInfo [{id, gauge, thp, thp_psig, rates}]`
+  (additive; ranking, RMS and every existing field unchanged). The step ⑥ card draws one traverse plot per test with a test picker
+  (`#wp_mtrav`, device pref `wtspref_wp_plots.mTrav`): each correlation's traverse from that test's THP against its gauge diamond and
+  THP marker, the legend gives that test's error (%), TVD / MD as before; one test picked → the unchanged single-test plot. Test:
+  WFU3 (per-test pressures and profiles = the single-test runs, RMS unchanged, picker, markers, gauge shift of the second test).
+- **Speed (pure refactors, results bit for bit).** Profiled in the test harness (node --cpu-prof, `tests/_harness.js` loadApp):
+  (1) the marcher's (p, T) property tables (`fluid.pvt.table`, §4.5) were rebuilt for every solve because every solve builds a new
+  frozen pvt object — they are now shared through a registry keyed by what `_pvtCore` reads (api, sgg, gas gravity, bin sizes, pvt
+  corr / mult / pbFactor / liquidNoTransfer / sep / shift / imp; numbers type-tagged; last 24 tables), nodes in a two-level Map and an
+  explicit bilinear field list (the same expression); the Rv trilinear table uses the same registry; (2) the base conditions and the PVT
+  library are resolved once per march instead of once per property call; (3) a global name lookup per call (Math, isFinite) was the
+  largest single cost: the engines on the path run their body in an inner function that receives Math / isFinite (flowline also
+  Number / Object) as parameters (49-calc-flowline, -gaslift, -lineheat, -chokeperf, 46-calc-gaspvt, 48-calc-wellbore and the
+  49-calc-wp-* engines), 16-pvt reads them through module variables `_M` / `_isFin` above its self-test. Identity: a 59-output dump
+  (solves, shut-in, max rate, beans, relaxation / enthalpy, traverses in 9 correlations, design, sensitivity 1 / 2 variables, tornado,
+  envelope, forecast, screening, gas-lift curve and design, ESP, lift table, Rv, props) equal to 939f9d8 in both call orders;
+  wellperf-identity FI1–FI9 pass; WFU4 (cold = repeat = after 30 other fluids, Object.is).
+  Measured (median, FIX.oilWell / FIX.gasWell, warm): harness oil solve 311 → 44 ms, gas 453 → 59 ms, sensitivity 10 cases
+  1,301 → 153 ms; headless Chromium (built page, three runs) oil 56–59 → 25–32 ms, gas 66–68 → 36–37 ms, sensitivity 10 cases
+  208–220 → 92–133 ms, cold first solve oil 105–109 → 65–74 ms, gas 110–129 → 76–83 ms. The ≈ 450 ms of A1 was the harness (a vm
+  context, where each global name lookup goes through the context's interceptor); in a real browser the solves already met the 250 ms
+  target and are now about twice as fast. Evaluation counts unchanged (every E budget ok). The --time millisecond caps are relative
+  (2 × the measured fine evaluation E × the count) and E fell 19 → 1.7–4.6 ms with the shared table, so a few operations dominated by
+  code outside this path (the plain-props marches of the gas-lift design, the Rv trilinear table, the relaxation profile) are now
+  reported "ms over cap" without --strict although each is 2–6 × faster in absolute terms (gas-lift design 658 → 262 ms, Rv solve
+  625 → 122 ms).
+
 ### 18.4 Increment C
 
 Equation of state; rod pump, PCP, jet pump, piston pump, multiphase booster, plunger / intermittent lift; coning; relative

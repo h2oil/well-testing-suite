@@ -3762,6 +3762,9 @@
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // ── Constants ────────────────────────────────────────────────────
     var MW_AIR = 28.9647;              // lb/lb-mol
@@ -4564,6 +4567,7 @@
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasPVT();
         });
     }
+    })(Math, isFinite);
 })();
 
 // ─── END 46-calc-gaspvt ─────────────────────────────────────────────
@@ -10730,6 +10734,9 @@ pipesz: {
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var BBL = 5.614583;                 // ft³ per bbl
     var BPM = BBL / 60;                 // ft³/s per bbl/min (0.0935764)
@@ -12419,6 +12426,7 @@ pipesz: {
     W.rhoAt = function (pp, T, fluid) { return rhoAt(pp, T, fluid); };
     W.hinge = function (x, y, w, o) { try { return hinge(x, y, w, o); } catch (e) { return null; } };
     W.version = '3.4a-1';
+    })(Math, isFinite);
 })();
 
 // ─── END 48-calc-wellbore ─────────────────────────────────────────────
@@ -31613,6 +31621,9 @@ pipesz: {
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // ── Constants ────────────────────────────────────────────────────
     var PATM = 14.696;                 // psia
@@ -32211,6 +32222,7 @@ pipesz: {
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcChokePerf();
         });
     }
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-chokeperf ─────────────────────────────────────────────
@@ -36009,6 +36021,9 @@ pipesz: {
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite / Number / Object as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite, Number, Object) {
 
     // ── Constants ────────────────────────────────────────────────────
     var GRAV = 32.174, GC = 32.174;         // ft/s², lbm·ft/(lbf·s²)
@@ -36230,7 +36245,7 @@ pipesz: {
     }
 
     // ── Fluid properties ────────────────────────────────────────────
-    function _lib() { var L = G.PRiSM_pvt_correlations; return (L && L.Z_dranchukAbouKassem && L.Rs_standing) ? L : null; }
+    function _lib() { if (_lMemo) return _lMemo; var L = G.PRiSM_pvt_correlations; return (L && L.Z_dranchukAbouKassem && L.Rs_standing) ? L : null; }
     function _pc(sg) {
         if (typeof G.WTS_gaspvt_pseudoCriticals === 'function') {
             var p = G.WTS_gaspvt_pseudoCriticals(sg, 0, 0, 0);
@@ -36239,7 +36254,11 @@ pipesz: {
         var L = _lib();
         return { Tpc: L.Tpc_sutton(sg), Ppc: L.Ppc_sutton(sg) };
     }
+    // 4.6.1 (performance, results unchanged): inside one march the base conditions cannot change (the march is synchronous), so the
+    // march resolves them once (_bMemo) instead of once per property call; outside a march every call resolves them as before
+    var _bMemo = null, _lMemo = null;      // and the PVT library (_lMemo; read once per march)
     function _basis() {
+        if (_bMemo) return _bMemo;
         var B = G.WTS_baseConditions;
         var b = (B && B.resolve) ? B.resolve(60, 14.696) : null;
         return (b && _fin(b.Tb_F) && _fin(b.Pb_psia)) ? b : { Tb_F: 60, Pb_psia: 14.696 };
@@ -36291,6 +36310,7 @@ pipesz: {
     var _TABS = (typeof WeakMap === 'function') ? new WeakMap() : null;
     function _pvtFn(L, prefix, key, dflt) { var f = (key && L[prefix + key]); return typeof f === 'function' ? f : dflt; }
     function _pvtCore(fluid, pv, p, t, sgMix) {
+        // (4.6.1: _pvtCoreTab interpolates these fields by name — keep its list in step with the object returned here)
         // (p, T)-only properties for this fluid's api / sgg / sgw (and the gas gravity in use)
         var L = _lib(), c = pv.corr || {}, m = pv.mult || {};
         var api = +fluid.api, sgg = +fluid.sgg;
@@ -36311,29 +36331,64 @@ pipesz: {
         return { rsRaw: rsRaw, z: z, mug: mugF(sgMix, t, z, p) * (_fin(+m.mug) ? +m.mug : 1), bw: L.Bw_meehan(p, t), muw: L.mu_w_meehan(t, 0),
                  muod: muodF(api, t), sigO: sigmaOil(api, t, p), sigW: sigmaWater(t, p) };
     }
+    // 4.6.1 (performance, results unchanged): a node of the table is _pvtCore at the node's (p, T) for this fluid, so it depends only on
+    // what _pvtCore reads — api, sgg, the gas gravity in use, the bin sizes and the pvt fields corr / mult / pbFactor / liquidNoTransfer /
+    // sep / shift / imp. The tables are shared between pvt objects with the same content (every solve builds a new frozen pvt): the
+    // registry is keyed by that content (numbers written with a type tag so NaN, null and 0 never meet) and keeps the last TAB_KEEP tables.
+    var _TAB_REG = (typeof Map === 'function') ? new Map() : null, TAB_KEEP = 24, _TAB_PVSIG = (typeof WeakMap === 'function') ? new WeakMap() : null;
+    function _sigVal(k, v) { return typeof v === 'number' ? 'n' + String(v) : v === undefined ? 'u' : v; }
+    function _pvSig(pv) {
+        var s = _TAB_PVSIG.get(pv);
+        if (s == null) {
+            s = JSON.stringify([pv.corr, pv.mult, pv.pbFactor, pv.liquidNoTransfer, pv.sep, pv.shift, pv.imp], _sigVal);
+            _TAB_PVSIG.set(pv, s);
+        }
+        return s;
+    }
+    function _tabFor(pv, api, sgg, sgMix, dp, dT) {
+        var last = _TABS.get(pv);
+        // fast path: the same numbers as the last lookup on this pvt (=== implies the same text key)
+        if (last && last.api === api && last.sgg === sgg && last.sgMix === sgMix && last.dp === dp && last.dT === dT) return last;
+        var sig = api + '|' + sgg + '|' + sgMix + '|' + dp + '|' + dT;
+        if (last && last.sig === sig) return last;
+        var tab = null;
+        if (_TAB_REG && _TAB_PVSIG) {
+            var full = _pvSig(pv) + '#' + sig;
+            tab = _TAB_REG.get(full) || null;
+            if (!tab) {
+                tab = { sig: sig, api: api, sgg: sgg, sgMix: sgMix, dp: dp, dT: dT, map: new Map() };
+                _TAB_REG.set(full, tab);
+                if (_TAB_REG.size > TAB_KEEP) _TAB_REG.delete(_TAB_REG.keys().next().value);
+            }
+        } else tab = { sig: sig, api: api, sgg: sgg, sgMix: sgMix, dp: dp, dT: dT, map: new Map() };
+        _TABS.set(pv, tab);
+        return tab;
+    }
     function _pvtCoreTab(fluid, pv, p, t, sgMix) {
         var o = pv.table === true ? {} : pv.table, dp = (+o.dp > 0) ? +o.dp : 5, dT = (+o.dT > 0) ? +o.dT : 2;
         if (pv.rv) return _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT);
-        var tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, sgMix, dp, dT].join('|');
-        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var map = _tabFor(pv, fluid.api, fluid.sgg, sgMix, dp, dT).map;
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), fp = p / dp - ip, ft = t / dT - it;
+        // the nodes in a two-level map (pressure bin → temperature bin) instead of 'a,b' text keys: the same node values
         function at(a, b) {
-            var k = a + ',' + b, v = tab.map[k];
-            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, sgMix);
+            var row = map.get(a), v;
+            if (!row) { row = new Map(); map.set(a, row); }
+            v = row.get(b);
+            if (!v) { v = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, sgMix); row.set(b, v); }
             return v;
         }
-        var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), out = {};
-        for (var k in c00) out[k] = (c00[k] * (1 - fp) + c10[k] * fp) * (1 - ft) + (c01[k] * (1 - fp) + c11[k] * fp) * ft;
-        return out;
+        var c00 = at(ip, it), c10 = at(ip + 1, it), c01 = at(ip, it + 1), c11 = at(ip + 1, it + 1), gp = 1 - fp, gt = 1 - ft;
+        // the bilinear interpolation of every _pvtCore field, in _pvtCore's key order (the same expression as the loop it replaces)
+        function bl(k) { return (c00[k] * gp + c10[k] * fp) * gt + (c01[k] * gp + c11[k] * fp) * ft; }
+        return { rsRaw: bl('rsRaw'), z: bl('z'), mug: bl('mug'), bw: bl('bw'), muw: bl('muw'), muod: bl('muod'), sigO: bl('sigO'), sigW: bl('sigW') };
     }
     // Rv (WP23): the free-gas gravity changes with p, so the table is also binned in the gravity (0.005) and interpolated trilinearly
     function _pvtCoreTabSg(fluid, pv, p, t, sgMix, dp, dT) {
-        var dS = 0.005, tab = _TABS.get(pv), sig = [fluid.api, fluid.sgg, 'rv', dp, dT].join('|');
-        if (!tab || tab.sig !== sig) { tab = { sig: sig, map: {} }; _TABS.set(pv, tab); }
+        var dS = 0.005, tab = _tabFor(pv, fluid.api, fluid.sgg, 'rv', dp, dT), map = tab.map;      // shared like _pvtCoreTab (4.6.1)
         var ip = Math.floor(p / dp), it = Math.floor(t / dT), is = Math.floor(sgMix / dS), fp = p / dp - ip, ft = t / dT - it, fs = sgMix / dS - is, out = {};
         function at(a, b, c) {
-            var k = a + ',' + b + ',' + c, v = tab.map[k];
-            if (!v) v = tab.map[k] = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS);
+            var k = a + ',' + b + ',' + c, v = map.get(k);
+            if (!v) { v = _pvtCore(fluid, pv, Math.max(1, a * dp), b * dT, c * dS); map.set(k, v); }
             return v;
         }
         var c000 = at(ip, it, is), c100 = at(ip + 1, it, is), c010 = at(ip, it + 1, is), c110 = at(ip + 1, it + 1, is);
@@ -36596,6 +36651,11 @@ pipesz: {
     //       refine (split steps with > 3 % pressure change), chokeRaise (reverse only: choked-exit pressure),
     //       pMax (psia: the march stops, lost 'high', when the pressure would pass it)}
     function march(route, fluid, p0g, t0, t1, opt) {
+        if (_bMemo) return _march(route, fluid, p0g, t0, t1, opt);
+        _bMemo = _basis(); _lMemo = _lib();
+        try { return _march(route, fluid, p0g, t0, t1, opt); } finally { _bMemo = null; _lMemo = null; }
+    }
+    function _march(route, fluid, p0g, t0, t1, opt) {
         if (opt.corr != null && !_corrOf(opt.corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(opt.corr), errors: ['unknown correlation key ' + String(opt.corr).slice(0, 40)] };
         var segs = route.segments, total = 0;
         for (var ks = 0; ks < segs.length; ks++) if (segs[ks].corr != null && !_corrOf(segs[ks].corr)) return { ok: false, code: 'UNKNOWN_CORR', corr: String(segs[ks].corr), errors: ['unknown correlation key ' + String(segs[ks].corr).slice(0, 40)] };
@@ -37515,6 +37575,7 @@ pipesz: {
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcFlowline();
         });
     }
+    })(Math, isFinite, Number, Object);
 })();
 
 // ─── END 49-calc-flowline ─────────────────────────────────────────────
@@ -37993,6 +38054,9 @@ pipesz: {
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var PATM = 14.696, RANK = 459.67;
     var N2 = { Tc: 227.16, Pc: 493.1 };            // nitrogen, °R / psia (GPSA; as 46-calc-gaspvt.js)
     var MAXV = 20;
@@ -38626,6 +38690,7 @@ pipesz: {
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcGasLift();
         });
     }
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-gaslift ─────────────────────────────────────────────
@@ -39655,6 +39720,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     'use strict';
 
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // ── Constants ────────────────────────────────────────────────────
     var RANK = 459.67, PATM = 14.696;
@@ -40153,6 +40221,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (r && r.getAttribute && r.getAttribute('data-done') === '1') G.calcLineHeat();
         });
     }
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-lineheat ─────────────────────────────────────────────
@@ -48359,6 +48428,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (ST.slow && !_force && !_liveCall) {
             ST.stale = true;
             _renderStale();
+            _staleStudies(M, true);
             S.wellperf = Object.assign({}, S.wellperf || {}, { stale: true });
             _emit('wts:wellperf-solved', { ok: false, stale: true });
             return S.wellperf;
@@ -48372,10 +48442,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (live) ST.liveMs = ST.solveMs;
         else { ST.liveMs = null; if (X.R && X.R.ok && !X.R.tracked) ST.Rfull = X.R; ST.lastKey = _mkey(M); }
         // sensitivity / bean-schedule results made on other inputs are marked stale (dimmed, with a re-run chip)
-        var mk = _mkey(M);
-        if (ST.sens) ST.sens.stale = !!(ST.sensKey && ST.sensKey !== mk);
-        if (ST.beans) ST.beans.stale = !!(ST.beansKey && ST.beansKey !== mk);
-        if (ST.gl) ST.gl.stale = !!(ST.glKey && ST.glKey !== _glKey(M));
+        _staleStudies(M, false);
         if (!live) { if (_multOf(M).tuned && X.R && X.R.ok) _untunedRef(); else if (!_multOf(M).tuned) ST.untuned = null; }
         var R = (X.R && X.R.ok !== undefined) ? X.R : null, ok = !!(R && R.ok);
         S.wellperf = {
@@ -48389,6 +48456,22 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (root) _renderAll(live);
         _emit('wts:wellperf-solved', { ok: ok });
         return S.wellperf;
+    }
+    // the stale flags of the study results (1- / 2-variable sensitivity with its heat map, bean schedule, gas-lift curve) against the
+    // model they were run on; a re-run stores a new result with the new key, so the flag clears. 4.6.1: also called when the page
+    // waits for the Solve button (a slow device): the results are marked and their tables re-drawn at once, without a solve
+    // (the study card compares its own keys — envelope, forecast, tornado, matrix, cases, screening — when it renders).
+    function _staleStudies(M, redraw) {
+        var mk = _mkey(M);
+        if (ST.sens) ST.sens.stale = !!(ST.sensKey && ST.sensKey !== mk);
+        if (ST.beans) ST.beans.stale = !!(ST.beansKey && ST.beansKey !== mk);
+        if (ST.gl) ST.gl.stale = !!(ST.glKey && ST.glKey !== _glKey(M));
+        if (!redraw || !_byId('wp_root')) return;
+        if (ST.sens) _renderSensTable(); else _renderStudies();
+        if (ST.beans) _renderBeans();
+        _renderGl();
+        var sx = (G.WTS_wellperf_ext || {}).studies;
+        if (sx && typeof sx.render === 'function') { try { sx.render(false); } catch (e) { if (typeof console !== 'undefined') console.error('[wellperf ext] studies: ' + (e && e.message)); } }
     }
     // the model identity used to tell whether a solve is needed again and whether study results are stale
     function _mkey(M) { if (!M) return ''; try { return JSON.stringify([M.fluid, M.res, M.well, M.surface, M.system, M.lift]); } catch (e) { return String(Math.random()); } }
@@ -50724,9 +50807,11 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                         '<td><div class="wp-bar" aria-hidden="true"><i style="left:0;width:' + w.toFixed(1) + '%;background:var(--' + col + ')"></i></div></td></tr>';
                 }).join('') + '</tbody></table></div>' + (cmp.gauge ? '<div class="wp-hint">Gauge ' + _u(cmp.gauge.p, 'pressure', 0, 'psia') + ' at ' + _u(cmp.gauge.md, 'length', 0, 'ft') + ' MD / ' + _u(cmp.gauge.tvd, 'length', 0, 'ft') + ' TVD; each correlation is marched down from the THP along the surveyed path at the test rates.</div>' : '');
         } else rk = _vHtml({ st: 'warn', t: '⚠ ' + (((cmp && cmp.errors) || [])[0] || 'The comparison engine is not available yet.') });
-        var dax = _plots().mdepth === 'md' ? 'md' : 'tvd';
-        out.push('<div class="wp-mres"><div class="wp-card" style="margin:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div class="rbox-title" style="margin:0">Traverses against the gauge</div><div class="wp-tabs rp-skip" id="wp_mdepth" style="margin-left:auto" role="group" aria-label="Depth axis"><button type="button" data-mdepth="tvd" class="' + (dax === 'tvd' ? 'on' : '') + '">TVD</button><button type="button" data-mdepth="md" class="' + (dax === 'md' ? 'on' : '') + '">MD</button></div></div>' +
-            '<div class="chart-wrap"><canvas id="wp_cv_match" tabindex="0" aria-label="Correlation comparison: pressure against depth for each correlation, with the measured gauge and wellhead pressures"></canvas></div><div class="wp-hint">Click a legend entry to hide a correlation; wheel or pinch to zoom, drag to pan, double-click to reset.</div></div><div>' + rk + '</div></div>');
+        var dax = _plots().mdepth === 'md' ? 'md' : 'tvd', pti = _matchTravTests(m), ti = _matchTravIdx(m);
+        // all used tests (RMS, 4.6.1): one traverse plot per test, picked here; each correlation's march at that test's rates
+        var tpick = pti.length > 1 ? '<div class="wp-tabs rp-skip" id="wp_mtrav" role="group" aria-label="Test shown on the traverse plot">' + pti.map(function (x, i) { return '<button type="button" data-mtrav="' + i + '" class="' + (i === ti ? 'on' : '') + '" aria-pressed="' + (i === ti ? 'true' : 'false') + '">' + _esc(String(x.id).slice(0, 24)) + '</button>'; }).join('') + '</div>' : '';
+        out.push('<div class="wp-mres"><div class="wp-card" style="margin:0"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><div class="rbox-title" style="margin:0">Traverses against the gauge' + (pti.length ? ' — test ' + _esc(String(pti[ti].id).slice(0, 24)) : '') + '</div>' + tpick + '<div class="wp-tabs rp-skip" id="wp_mdepth" style="margin-left:auto" role="group" aria-label="Depth axis"><button type="button" data-mdepth="tvd" class="' + (dax === 'tvd' ? 'on' : '') + '">TVD</button><button type="button" data-mdepth="md" class="' + (dax === 'md' ? 'on' : '') + '">MD</button></div></div>' +
+            '<div class="chart-wrap"><canvas id="wp_cv_match" tabindex="0" aria-label="Correlation comparison: pressure against depth for each correlation, with the measured gauge and wellhead pressures"></canvas></div><div class="wp-hint">' + (pti.length ? 'All used tests: pick a test above to see each correlation\'s traverse against its gauge (the legend gives that test\'s error); the ranking on the right is the RMS over the tests. ' : '') + 'Click a legend entry to hide a correlation; wheel or pinch to zoom, drag to pan, double-click to reset.</div></div><div>' + rk + '</div></div>');
         // back-calculated inflow value
         var NAME = { pr: 'reservoir pressure p̄r', J: 'productivity (PI equivalent)', S: 'skin S' };
         if (ip && ip.ok !== false && _fin(ip.value)) {
@@ -50744,6 +50829,19 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         var pal = [T.accent, T.blue, T.purple, T.green, T.yellow, T.red, T.text2];
         var dk = function (r) { return _dv(dax === 'md' ? r.md : (_fin(r.tvd) ? r.tvd : r.md), 'length'); };
         var ser = [], markers = [], reg = G.WTS_flowline_corr || {};
+        if (cmp && cmp.ok !== false && m.all) {
+            // all used tests (4.6.1): the picked test's march per correlation, its gauge and THP; the legend carries that test's error
+            var pti = _matchTravTests(m), ti = _matchTravIdx(m), inf = pti[ti];
+            if (inf) {
+                (cmp.rows || []).forEach(function (r, i) {
+                    var pt = (r.perTest || [])[ti]; if (!pt || !pt.profile || !pt.profile.length) return;
+                    ser.push({ key: r.corr, label: ((reg[r.corr] && reg[r.corr].label) || r.corr).replace(/\s*\(.*$/, '') + (r.verified ? '' : ' (prov.)') + (_fin(pt.errPct) ? ' ' + (pt.errPct >= 0 ? '+' : '') + _fmt(pt.errPct, 1) + ' %' : ''),
+                        color: pal[i % pal.length], width: i === 0 ? 2.6 : 1.8, dash: r.verified ? null : [6, 3], pts: pt.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) });
+                });
+                if (inf.gauge) markers.push({ x: _dv(inf.gauge.p, 'pressure'), y: dk(inf.gauge), kind: 'diamond', color: T.green, r: 7, label: 'Gauge (' + String(inf.id).slice(0, 24) + ')' });
+                if (_fin(inf.thp)) markers.push({ x: _dv(inf.thp, 'pressure'), y: 0, kind: 'filled', color: T.text, r: 5, label: 'THP' });
+            }
+        }
         if (cmp && cmp.ok !== false && !m.all) {
             (cmp.rows || []).forEach(function (r, i) { if (r.profile && r.profile.length) ser.push({ key: r.corr, label: ((reg[r.corr] && reg[r.corr].label) || r.corr).replace(/\s*\(.*$/, '') + (r.verified ? '' : ' (prov.)'), color: pal[i % pal.length], width: i === 0 ? 2.6 : 1.8, dash: r.verified ? null : [6, 3], pts: r.profile.map(function (p) { return [_dv(p.p, 'pressure'), dk(p)]; }) }); });
             if (cmp.gauge) markers.push({ x: _dv(cmp.gauge.p, 'pressure'), y: dk(cmp.gauge), kind: 'diamond', color: T.green, r: 7, label: 'Gauge' });
@@ -50751,12 +50849,15 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         }
         var ip = m.ipr;
         if (ip && ip.ok !== false && _fin(ip.pwf) && ST.SC && ST.SC.perfs && _fin(ST.SC.perfs.midMd)) markers.push({ x: _dv(ip.pwf, 'pressure'), y: _dv(dax === 'md' ? ST.SC.perfs.midMd : (_fin(ST.SC.perfs.midTvd) ? ST.SC.perfs.midTvd : ST.SC.perfs.midMd), 'length'), kind: 'hollow', color: T.accent, r: 6, label: 'pwf' });
-        V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i'), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
+        V.chart(cv, { key: 'match:' + dax + (_metric() ? 'm' : 'i') + (m.all ? ':t' + _matchTravIdx(m) : ''), aspect: 0.72, minH: 260, maxH: 460, w: 560, readout: 'y',
             x: { label: 'Pressure (' + _lab('pressure', 'psia') + ')', short: 'p', fmtR: function (v) { return _fmt(v, 0) + ' ' + _lab('pressure', 'psia'); } },
             y: { label: (dax === 'md' ? 'MD' : 'TVD') + ' (' + dl + ')', invert: true, min: 0, short: 'Depth', fmtR: function (v) { return _depthPair(v, dax); } },
             series: ser, markers: markers, hidden: _plots().mHidden || null, onLegend: function (hid) { _plotsSet({ mHidden: hid }); },
-            empty: m.all ? 'Pick one test to see its traverses (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
+            empty: m.all ? 'No correlation reached this test\'s gauge (the RMS ranking is on the right).' : 'The traverses appear when the comparison has a gauge pressure.' });
     }
+    // the tests of an all-tests comparison (WTS_wp_match.compare perTestInfo, 4.6.1) and the one shown (device pref, clamped)
+    function _matchTravTests(m) { var c = m && m.all && m.compare; return (c && c.ok !== false && Array.isArray(c.perTestInfo)) ? c.perTestInfo : []; }
+    function _matchTravIdx(m) { var n = _matchTravTests(m).length, i = Math.floor(+_plots().mTrav); return n && _fin(i) && i >= 0 && i < n ? i : 0; }
     // ── VLP tuning (WP17, A2; plan §5.2, D10) ────────────────────────────────
     // WTS_wp_match.tuneJob fits the holdup multiplier m_h (and the friction multiplier m_f when the used tests span ≥ 2:1 in rate)
     // with PRiSM_lm against the gauge pressures; the result card shows the multipliers as KPI chips, the flags, the parameter
@@ -51679,6 +51780,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             if (b.getAttribute('data-tab')) { _plotsSet({ trTab: b.getAttribute('data-tab') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-mapk')) { _plotsSet({ mapKind: b.getAttribute('data-mapk') }); _renderTraverseCard(); return; }
             if (b.getAttribute('data-depth')) { _plotsSet({ depth: b.getAttribute('data-depth') }); _renderTraverseCard(); return; }
+            if (b.getAttribute('data-mtrav') != null) { _plotsSet({ mTrav: +b.getAttribute('data-mtrav') || 0 }); _renderMatch(); var nb = document.querySelector && document.querySelector('#wp_mtrav [data-mtrav="' + b.getAttribute('data-mtrav') + '"]'); if (nb && nb.focus) nb.focus(); return; }
             if (b.getAttribute('data-mdepth')) { _plotsSet({ mdepth: b.getAttribute('data-mdepth') }); Array.prototype.forEach.call(document.querySelectorAll('#wp_mdepth button'), function (x) { if (x.classList) x.classList.toggle('on', x === b); }); _drawMatchPlot(); _drawTunePlot(); return; }
             var act = b.getAttribute('data-act'); if (act) _act(act, b);
         });
@@ -51825,6 +51927,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var VERSION = '1.0.0';
     var PAGE_KEY = 'wts_page_wellperf', MODEL_KEY = 'wts_wellperf_model';
     var HZ_INC = 80;            // a section at ≥ 80° inclination counts as horizontal (the schematic uses the same rule)
@@ -52056,6 +52161,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.storedFrom = storedFrom;
     NS.VERSION = VERSION; NS.HZ_INC = HZ_INC; NS.sources = sources; NS.readWell = readWell; NS.summarise = summarise; NS.job = job;
     NS.table = table; NS.csv = csv; NS.key = key;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-batch ─────────────────────────────────────────────
@@ -52126,6 +52232,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PROVISIONAL = 'provisional — not verified against a published example';
     var KINDS = ['base', 'matched', 'proposed', 'other'];
@@ -52540,6 +52649,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var FC = G.WTS_wp_forecast = G.WTS_wp_forecast || {};
     FC.PROVISIONAL = PROVISIONAL; FC.MODES = ['steps', 'tank']; FC.DEFAULT_MODE = 'steps'; FC.MAX_STEPS = MAX_STEPS;
     FC.tank = tank; FC.job = job; FC.csv = csvForecast; FC._num = _num;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-cases ─────────────────────────────────────────────
@@ -52599,6 +52709,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PROVISIONAL = 'provisional — not verified against a published example';
     var PATM = 14.696;
@@ -52907,6 +53020,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.job = envJob; NS.at = at; NS.FRACS = FRACS.slice();
     var SC = G.WTS_wp_screen = G.WTS_wp_screen || {};
     SC.PROVISIONAL = PROVISIONAL; SC.METHODS = METHODS; SC.RANGE = RANGE; SC.matrix = matrix; SC.job = screenJob; SC._window = _window;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-envelope ─────────────────────────────────────────────
@@ -52990,6 +53104,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var VERSION = '4.5-wp26';
     var PROVISIONAL = 'provisional — not verified against a published example';
     var PATM = 14.696, BBL_FT3 = 5.614583, HHP = 135770, RHO_W = 62.428;
@@ -53331,6 +53448,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.VERSION = VERSION; NS.PROVISIONAL = PROVISIONAL; NS.METHODS = METHODS; NS.CU_R20 = CU_R20; NS.MAX_GROUPS = MAX_GROUPS;
     NS.example = example; NS.normPump = normPump; NS.curve = curve; NS.fan = fan; NS.turzo = turzo; NS.natSep = natSep; NS.turpin = turpin;
     NS.prepare = prepare; NS.pump = pump; NS.motor = motor; NS.flags = flags; NS.sizeStages = sizeStages; NS.sweep = sweep;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-esp ─────────────────────────────────────────────
@@ -53885,6 +54003,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PATM = 14.696;
     var MAX_VALUES = { flo: 30, thp: 15, wfr: 10, gfr: 10, alq: 10 };
@@ -54638,6 +54759,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.text = text; NS.parseText = parseText; NS.csv = csv; NS.slice = slice; NS.interp = interp;
     NS.pvtTable = pvtTable; NS.pvtCsv = pvtCsv; NS.pvtText = pvtText; NS.parsePvtText = parsePvtText;
     NS.MAX_POINTS = MAX_POINTS; NS.MAX_VALUES = MAX_VALUES; NS.SLICE_MS = SLICE_MS; NS.PROVISIONAL = PROVISIONAL;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-export ─────────────────────────────────────────────
@@ -54714,6 +54836,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var RANK = 459.67, MW_AIR = 28.9647, R_GAS = 10.7316;
     var RHO_W_BBL = 62.37 * 5.614583;              // lbm per bbl of water (the 62.37 of the flowline oil density)
@@ -55193,6 +55318,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     // this file is the implementation: drop the WP0 stub names
     var STUBS = G.__WP_STUBS;
     if (Array.isArray(STUBS)) for (var i = STUBS.length - 1; i >= 0; i--) if (/^WTS_wp_fluid\./.test(STUBS[i])) STUBS.splice(i, 1);
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-fluid ─────────────────────────────────────────────
@@ -55266,6 +55392,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PATM = 14.696, RANK = 459.67, GFT = 32.16;
     var TC = { cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32], verified: false, label: 'Thornhill-Craver' };
@@ -55666,6 +55795,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
     NS.TC = TC; NS.DESIGN = DESIGN; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
     NS.diagnose = diagnose; NS.parseSurvey = parseSurvey; NS.matchSurvey = matchSurvey; NS.asheim = asheim; NS.pdAt = _pdAt;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-gldesign ─────────────────────────────────────────────
@@ -56314,6 +56444,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var PATM = 14.696, TOL_P = 0.1;
     var PROVISIONAL = 'provisional — not verified against a published example';
 
@@ -56488,6 +56621,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var NS = G.WTS_wp_inj = G.WTS_wp_inj || {};
     NS.solve = solve; NS.fracFromDfit = fracFromDfit; NS.isInjector = isInjector; NS.PROVISIONAL = PROVISIONAL;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-inj ─────────────────────────────────────────────
@@ -56551,6 +56685,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PROVISIONAL = 'provisional — not verified against a published example';
     var P_AOF = 14.65, NCURVE = 41, RANK = 459.67;
@@ -57594,6 +57731,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     api.darcyX = darcyX;
     api.PROVISIONAL = PROVISIONAL;
     api.CONST = { P_AOF: P_AOF, C_DARCY_OIL: C_DARCY_OIL, C_DARCY_GAS: C_DARCY_GAS, C_FORCH: C_FORCH, C_D: C_D, C_BETA: C_BETA };
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-ipr ─────────────────────────────────────────────
@@ -57637,6 +57775,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var DEFAULT_LIST = [0, 250, 500, 750, 1000, 1500, 2000, 2500, 3000, 3500, 4000, 5000];
     var MAX_POINTS = 24, REFINE = 7;                                              // golden-section solves after the grid
@@ -57798,6 +57939,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 
     var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
     NS.glpc = glpc; NS.quickLook = quickLook; NS.summary = summary; NS.DEFAULT_LIST = DEFAULT_LIST.slice();
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-lift ─────────────────────────────────────────────
@@ -57865,8 +58007,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 //   WTS_wp_match
 //     .compare(M, test | tests[], corrKeys?, o? /*{stepFt, mult, profiles:false}*/)
 //         → {ok, tests:[id], gauge:{md, tvd, p} (one test), thp, rows:[{corr, label, pCalc psia|null, err, errPct, errPctDp, rank,
-//            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct}], n}],
-//            best, warnings, errors}
+//            verified, provisional, lost, warnings[], profile:[{md, tvd, p}] (one test), perTest:[{id, pCalc, err, errPct, profile}], n}],
+//            best, warnings, errors; several tests (4.6.1, additive): perTestInfo:[{id, gauge, thp, thp_psig, rates}] in the order of
+//            each row's perTest, and perTest[].profile = that test's march (the all-tests traverse plot) — the ranking is unchanged}
 //     .thtFit(M, tests) → {ok, rows:[{id, use, tht, q, ok, U, Ubasis, A, w, cp, range, msg}], uRange:[lo, hi] | null, U (geometric
 //            mean of the used fits), n, provisional}   (A2, WP14: U fitted to each test's measured THT, relaxation model)
 //     .iprFromTest(M, test, solveFor /*'pr'|'J'|'S'*/, o? /*{corr}*/)
@@ -57895,6 +58038,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP7 implements compare / iprFromTest / qc and WP17 (A2) tune: their names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -58136,7 +58282,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
                 row.warnings = r.warnings; row.profile = r.profile; row.n = r.pCalc == null ? 0 : 1;
             } else {
                 var e2 = 0, p2 = 0, n = 0;
-                row.perTest = good.map(function (p) { var r = p.res[k]; if (r.pCalc != null) { e2 += r.err * r.err; p2 += r.errPct * r.errPct; n++; } return { id: p.id, pCalc: r.pCalc, err: r.err, errPct: r.errPct }; });
+                row.perTest = good.map(function (p) { var r = p.res[k]; if (r.pCalc != null) { e2 += r.err * r.err; p2 += r.errPct * r.errPct; n++; } return { id: p.id, pCalc: r.pCalc, err: r.err, errPct: r.errPct, profile: r.profile }; });
                 row.n = n; row.pCalc = null; row.err = n ? Math.sqrt(e2 / n) : null; row.errPct = n ? Math.sqrt(p2 / n) : null; row.errPctDp = null;
                 row.lost = n < good.length; row.rms = true; row.warnings = [];
             }
@@ -58152,6 +58298,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         if (rows.some(function (r) { return !r.verified; })) warnings.push(_w('PROVISIONAL', 'Correlations marked provisional have no verified published example (' + PROVISIONAL + ').', 'info'));
         var out = { ok: !!best, tests: good.map(function (p) { return p.id; }), rows: rows, best: best, warnings: warnings, errors: best ? [] : ['Every march was lost before the gauge.'] };
         if (!multi) { out.gauge = good[0].gauge; out.thp = good[0].thp; out.thp_psig = good[0].thp - PATM; out.rates = good[0].rates; }
+        else out.perTestInfo = good.map(function (p) { return { id: p.id, gauge: p.gauge, thp: p.thp, thp_psig: _fin(p.thp) ? p.thp - PATM : null, rates: p.rates }; });
         return out;
     }
 
@@ -58632,6 +58779,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.TOL = { choke: CHOKE_TOL, vlpPct: VLP_TOL, wcJump: WC_JUMP, sep: SEP_TOL, tht: THT_TOL };
     NS.tune = tune; NS.tuneJob = tuneJob; NS.TUNE = { bounds: { hl: TUNE_BOUNDS.hl.slice(), f: TUNE_BOUNDS.f.slice() }, flag: TUNE_FLAG.slice(), rho: TUNE_RHO, span: TUNE_SPAN, scan: TUNE_SCAN, inseparable: INSEP_MSG };
     G.WTS_wp_qc = qc;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-match ─────────────────────────────────────────────
@@ -59210,6 +59358,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
     var PROV = 'provisional — not verified against a published example';
     var PROPS = ['rs', 'bo', 'muo'];
     var MAX_ROWS = 60;
@@ -59614,6 +59765,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.emulsion = emulsion; NS.rvAt = rvAt; NS.emulCurve = emulCurve; NS.rvCurve = rvCurve;
     NS.METHODS = METHODS; NS.PROV_NOTE = PROV; NS.BOUNDS = BOUNDS; NS.BAND = BAND; NS.PROPS = PROPS.slice(); NS._EX = EX;
     NS.evals = function () { return _evals; };
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-pvtmatch ─────────────────────────────────────────────
@@ -59674,6 +59826,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP6 replaces the WP0 stub file: its names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -60285,6 +60440,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
         return L.join('\n');
     };
     NS.MAX_VALUES = MAX_VALUES; NS.FAM_FRACS = FAM_FRACS.slice();
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-sens ─────────────────────────────────────────────
@@ -61260,6 +61416,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP5 replaces the WP0 stub file: its names leave window.__WP_STUBS
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -62977,6 +63136,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.SCAN_FRACS = SCAN_FRACS.slice(); NS.TOL_P = TOL_P; NS.TOL_Q = TOL_Q; NS.GILBERT_YC = GILBERT_YC; NS.LOAD = LOAD; NS.HEADING_FRAC = HEADING_FRAC;
     G.WTS_wp_loading = loading;
     G.WTS_wp_check = check;
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-system ─────────────────────────────────────────────
@@ -64704,6 +64864,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var GRAV = 32.174, GC = 32.174;            // ft/s², lbm·ft/(lbf·s²)
     var PATM = 14.696;                         // psia (the marcher's atmosphere)
@@ -66228,6 +66391,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
             var i = STUBS.indexOf(n); if (i >= 0) STUBS.splice(i, 1);
         });
     }
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-vlp ─────────────────────────────────────────────
@@ -66304,6 +66468,9 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     // WP4 replaces the WP0 stub file: its names leave window.__WP_STUBS (they are never added by this file)
     var STUBS = G.__WP_STUBS = G.__WP_STUBS || [];
@@ -67233,6 +67400,7 @@ Object.assign(H,{onShow:fill,renderBook,print,printRun:run,printItems:items,book
     NS.RELAX_DEFAULTS = Object.freeze(Object.assign({}, RELAX_DEF));
     NS.DEFAULTS = Object.freeze({ maxDoglegDeg: DEF_DOGLEG, highDls: HIGH_DLS, deviatedInc: DEVIATED_INC, rough: DEF_ROUGH });
     NS.version = '4.5-wp22';
+    })(Math, isFinite);
 })();
 
 // ─── END 49-calc-wp-well ─────────────────────────────────────────────

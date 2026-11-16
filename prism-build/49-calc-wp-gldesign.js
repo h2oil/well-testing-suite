@@ -63,9 +63,9 @@
 (function () {
     'use strict';
     var G = (typeof window !== 'undefined') ? window : globalThis;
-    // 4.6.1 (performance, results unchanged): the engine's hot loops read Math / isFinite from a local binding of the same global objects
-    // (a global name lookup per call was the largest single cost in the property and gradient loops; the values are the same functions)
-    var Math = (typeof globalThis !== 'undefined' ? globalThis : G).Math, isFinite = (typeof globalThis !== 'undefined' ? globalThis : G).isFinite;
+    // 4.6.1 (performance, results unchanged): the module body runs in an inner function that receives Math / isFinite as
+    // parameters (the same global objects), so its hot loops read a local binding instead of a global name lookup per call
+    (function (Math, isFinite) {
 
     var PATM = 14.696, RANK = 459.67, GFT = 32.16;
     var TC = { cd: 0.865, k: 1.27, abellows_in2: 0.77, ports: [8, 12, 16, 20, 24, 28, 32], verified: false, label: 'Thornhill-Craver' };
@@ -466,6 +466,7 @@
     var NS = G.WTS_wp_gl = G.WTS_wp_gl || {};
     NS.TC = TC; NS.DESIGN = DESIGN; NS.tc = tc; NS.portR = portR; NS.context = context; NS.inputFor = inputFor; NS.design = design; NS.valvesFromDesign = valvesFromDesign; NS.setValve = setValve;
     NS.diagnose = diagnose; NS.parseSurvey = parseSurvey; NS.matchSurvey = matchSurvey; NS.asheim = asheim; NS.pdAt = _pdAt;
+    })(Math, isFinite);
 })();
 
 // === SELF-TEST ===
